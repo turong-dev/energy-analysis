@@ -1,3 +1,5 @@
 solax/data
 solax/.venv
 solax/examples
+
+infra/Pulumi.dev.yaml

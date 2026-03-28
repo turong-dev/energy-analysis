@@ -1,0 +1,3 @@
+name: energy-utility
+runtime: go
+description: Infrastructure for the solar energy analysis platform
