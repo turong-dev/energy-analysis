@@ -39,6 +39,8 @@ func main() {
 	mux.HandleFunc("GET /api/rates", ratesHandler(s3))
 	mux.HandleFunc("GET /api/consumption", consumptionHandler(s3))
 	mux.HandleFunc("GET /api/analysis", analysisHandler(s3, &cfg.Octopus))
+	mux.HandleFunc("GET /api/battery/mode-switch", modeSwitchHandler(s3))
+	mux.HandleFunc("GET /api/battery/charging-optimisation", chargingOptHandler(s3))
 	mux.Handle("/", http.FileServerFS(sub))
 
 	log.Printf("listening on %s", *addr)

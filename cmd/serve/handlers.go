@@ -12,6 +12,7 @@ import (
 	"energy-utility/internal/analysis"
 	"energy-utility/internal/config"
 	"energy-utility/internal/octopus"
+	"energy-utility/internal/solax"
 	"energy-utility/internal/store"
 )
 
@@ -85,6 +86,34 @@ func consumptionHandler(s3 *store.Client) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(points)
+	}
+}
+
+func chargingOptHandler(s3 *store.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		days, err := solax.ReadDays(r.Context(), s3)
+		if err != nil {
+			log.Printf("charging-opt: read days: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		result := analysis.AnalyseCharging(days)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func modeSwitchHandler(s3 *store.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		days, err := solax.ReadDays(r.Context(), s3)
+		if err != nil {
+			log.Printf("mode-switch: read days: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		result := analysis.DetectModeSwitch(days)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	}
 }
 

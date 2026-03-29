@@ -131,6 +131,26 @@
     }
     .scenario-tab.active { background: #111118; color: #f59e0b; border-color: #f59e0b40; }
 
+    /* Card info panel */
+    .card-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      margin-bottom: 12px; gap: 8px;
+    }
+    .card-header .card-label { margin-bottom: 0; flex: 1; }
+    .info-btn {
+      background: transparent; border: 1px solid #2e2e3e; border-radius: 4px;
+      color: #4b5563; cursor: pointer; font-size: 10px; letter-spacing: 1px;
+      padding: 3px 8px; font-family: inherit; text-transform: uppercase;
+      transition: all 0.15s; white-space: nowrap; flex-shrink: 0;
+    }
+    .info-btn:hover, .info-btn.active { color: #f8fafc; border-color: #6b7280; }
+    .card-info {
+      display: none; background: #0a0a0f; border-left: 2px solid #2e2e3e;
+      border-radius: 0 4px 4px 0; padding: 12px 16px; margin-bottom: 16px;
+      font-size: 11px; color: #9ca3af; line-height: 1.7;
+    }
+    .card-info.visible { display: block; }
+
     /* Stats row */
     .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .stat {
@@ -158,6 +178,8 @@
     <button class="tab active" data-view="rates">Agile Rates</button>
     <button class="tab" data-view="consumption">Consumption</button>
     <button class="tab" data-view="analysis">Analysis</button>
+    <button class="tab" data-view="battery">Battery Mode</button>
+    <button class="tab" data-view="charging">Charging</button>
   </div>
 
   <div class="controls">
@@ -200,7 +222,16 @@
     </div>
 
     <div class="card">
-      <div class="card-label">p / kWh · half-hourly</div>
+      <div class="card-header">
+        <div class="card-label">p / kWh · half-hourly</div>
+        <button class="info-btn" onclick="toggleInfo(this)">info</button>
+      </div>
+      <div class="card-info">
+        Half-hourly Agile tariff rates from Octopus Energy in p/kWh. Bars are colour-coded by price band —
+        dark green = negative (you're paid to consume), bright green = under 10p (very cheap), through to red = over 40p (expensive).
+        Switch between Import and Export to compare buy and sell rates.
+        The cheapest overnight slots are where pre-charging the battery pays off most.
+      </div>
       <div class="rate-legend">
         <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#1a7a1a"></span>negative</div>
         <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#2ecc40"></span>&lt; 10p</div>
@@ -247,13 +278,92 @@
     </div>
 
     <div class="card">
-      <div class="card-label">Daily net cost · pence · Go (actual) vs Agile (hypothetical)</div>
+      <div class="card-header">
+        <div class="card-label">Daily net cost · pence · Go (actual) vs scenario</div>
+        <button class="info-btn" onclick="toggleInfo(this)">info</button>
+      </div>
+      <div class="card-info">
+        Daily net energy cost for each tariff: import spend minus export income, in pence.
+        Go actual (green) is what you paid; the amber bars show the hypothetical scenario selected above.
+        On days where the scenario bar is lower, that tariff would have been cheaper.
+        Use the scenario selectors to mix and match import and export tariffs independently.
+      </div>
       <div class="chart-wrap" style="height:220px"><canvas id="analysis-chart"></canvas></div>
     </div>
 
     <div class="card">
-      <div class="card-label" id="saving-chart-label">Cumulative saving vs Go actual · £ · positive = scenario cheaper</div>
+      <div class="card-header">
+        <div class="card-label" id="saving-chart-label">Cumulative saving vs Go actual · £ · positive = scenario cheaper</div>
+        <button class="info-btn" onclick="toggleInfo(this)">info</button>
+      </div>
+      <div class="card-info">
+        Running total of the cost difference between the selected scenario and your actual Go tariff, in pounds.
+        A rising line means the scenario is getting cheaper over time relative to Go; a falling line means Go is winning.
+        This is the headline number: how much you would have saved (or lost) had you been on the alternative tariff since the data begins.
+      </div>
       <div class="chart-wrap" style="height:180px"><canvas id="saving-chart"></canvas></div>
+    </div>
+  </div>
+
+  <div id="view-battery" style="display:none">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Mode switch detected</div>
+        <div class="stat-value" id="bm-date" style="font-size:14px">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Pre-switch avg daytime charge</div>
+        <div class="stat-value" id="bm-pre">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Post-switch avg daytime charge</div>
+        <div class="stat-value" id="bm-post">—</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-label">Daytime battery charging (after 07:00) · kWh · days with solar yield &gt; 1 kWh</div>
+        <button class="info-btn" onclick="toggleInfo(this)">info</button>
+      </div>
+      <div class="card-info">
+        Battery charging that occurs after 07:00 (i.e. from solar, not the overnight grid window) for each day with at least 1 kWh of solar yield.
+        In export-priority mode the inverter sends solar to the grid first — the battery only charges from the overnight off-peak window,
+        so daytime charging is near zero (blue bars).
+        In self-use mode the battery also charges from solar during the day (green bars).
+        The dashed vertical line marks the detected mode switch date.
+      </div>
+      <div class="chart-wrap" style="height:240px"><canvas id="battery-chart"></canvas></div>
+    </div>
+  </div>
+
+  <div id="view-charging" style="display:none">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Decision threshold</div>
+        <div class="stat-value" id="co-threshold">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Depleted days</div>
+        <div class="stat-value" id="co-depleted" style="font-size:16px">—</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-label">Daily solar yield · <span style="color:#ef4444">red = battery depleted</span> · <span style="color:#3b82f6">— min SoC</span> · <span style="color:#f59e0b">— 15% threshold</span></div>
+        <button class="info-btn" onclick="toggleInfo(this)">info</button>
+      </div>
+      <div class="card-info">
+        Daily solar yield (bars, left axis) overlaid with the lowest battery SoC reached each day (blue line, right axis),
+        measured from 07:00 after the overnight grid charge.
+        Red bars are days where the battery dropped to ≤15% — all usable charge was consumed before the next off-peak window.
+        When red bars cluster it's a signal to run the inverter in self-use mode so solar can top up the battery mid-day.
+        The amber dashed line marks the 15% depletion threshold; the purple dashed line is the computed yield decision boundary.
+      </div>
+      <div class="chart-wrap" style="height:300px"><canvas id="charging-chart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Seasonal breakdown</div>
+      <table id="co-seasons-table" style="width:100%;border-collapse:collapse;font-size:11px;font-family:inherit"></table>
     </div>
   </div>
 
@@ -274,12 +384,26 @@
     </div>
 
     <div class="card">
-      <div class="card-label">kWh · half-hourly</div>
+      <div class="card-header">
+        <div class="card-label">kWh · half-hourly</div>
+        <button class="info-btn" onclick="toggleInfo(this)">info</button>
+      </div>
+      <div class="card-info">
+        Half-hourly electricity readings from your SMETS2 smart meter in kWh per slot.
+        Import shows energy drawn from the grid; export shows energy sent back.
+        This is the raw metered data used in the cost comparison — it represents your net grid interaction
+        after solar generation and battery activity.
+      </div>
       <div class="chart-wrap"><canvas id="consumption-chart"></canvas></div>
     </div>
   </div>
 
   <script>
+    function toggleInfo(btn) {
+      btn.closest('.card').querySelector('.card-info').classList.toggle('visible');
+      btn.classList.toggle('active');
+    }
+
     // ── state ────────────────────────────────────────────────────────────────
     let direction = 'import';
     let currentView = 'rates';
@@ -291,10 +415,59 @@
       return d;
     })();
 
-    let ratesChart, consumptionChart;
+    let ratesChart, consumptionChart, batteryChart, chargingChart;
     let importScenario = 'go';   // 'go' | 'agile'
     let exportScenario = 'agile'; // 'fixed' | 'agile'
     let lastAnalysisData = null;
+    let batteryLoaded = false;
+    let chargingLoaded = false;
+
+    // Custom plugin: draws horizontal and/or vertical threshold lines on any chart.
+    Chart.register({
+      id: 'thresholdLines',
+      afterDraw(chart, _, opts) {
+        const { depletionY, breakevenX } = opts;
+        if (depletionY == null && breakevenX == null) return;
+        const { top, bottom, left, right } = chart.chartArea;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        if (depletionY != null && chart.scales.y) {
+          const y = chart.scales.y.getPixelForValue(depletionY);
+          ctx.strokeStyle = '#f59e0b';
+          ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+        }
+        if (breakevenX != null && chart.scales.x) {
+          const x = chart.scales.x.getPixelForValue(breakevenX);
+          ctx.strokeStyle = '#a78bfa';
+          ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+        }
+        ctx.restore();
+      },
+    });
+
+    // Custom plugin: draws a vertical dashed line at a given bar index.
+    Chart.register({
+      id: 'verticalLine',
+      afterDraw(chart, _, opts) {
+        if (opts.index == null || opts.index < 0) return;
+        const meta = chart.getDatasetMeta(0);
+        const bar  = meta.data[opts.index];
+        if (!bar) return;
+        const { top, bottom } = chart.chartArea;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(bar.x, top);
+        ctx.lineTo(bar.x, bottom);
+        ctx.stroke();
+        ctx.restore();
+      },
+    });
 
     function scenarioNet(day) {
       const imp = importScenario === 'agile' ? day.agile_import : day.go_import;
@@ -479,10 +652,15 @@
       document.getElementById('view-rates').style.display       = view === 'rates'       ? '' : 'none';
       document.getElementById('view-consumption').style.display = view === 'consumption' ? '' : 'none';
       document.getElementById('view-analysis').style.display    = view === 'analysis'    ? '' : 'none';
+      document.getElementById('view-battery').style.display     = view === 'battery'     ? '' : 'none';
+      document.getElementById('view-charging').style.display    = view === 'charging'    ? '' : 'none';
       document.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.view === view));
-      // direction is irrelevant for analysis (both directions are combined)
-      document.querySelector('.dir-tabs').style.visibility = view === 'analysis' ? 'hidden' : '';
+      const dateControls = view !== 'battery' && view !== 'charging';
+      document.querySelector('.nav').style.visibility          = dateControls ? '' : 'hidden';
+      document.querySelector('.window-tabs').style.visibility  = dateControls ? '' : 'hidden';
+      document.querySelector('.dir-tabs').style.visibility     =
+        (view === 'analysis' || view === 'battery' || view === 'charging') ? 'hidden' : '';
     }
 
     // ── analysis ─────────────────────────────────────────────────────────────
@@ -578,6 +756,193 @@
       });
     }
 
+    function renderBattery(result) {
+      if (batteryChart) batteryChart.destroy();
+      const switchDate = result.switch_date;
+      const days = result.days || [];
+      const switchIdx = switchDate ? days.findIndex(d => d.date === switchDate) : -1;
+
+      document.getElementById('bm-date').textContent = switchDate || 'Not detected';
+
+      let preSum = 0, preCount = 0, postSum = 0, postCount = 0;
+      days.forEach((d, i) => {
+        if (switchIdx < 0 || i < switchIdx) { preSum += d.daytime_charge_kwh; preCount++; }
+        else { postSum += d.daytime_charge_kwh; postCount++; }
+      });
+      document.getElementById('bm-pre').innerHTML =
+        preCount ? (preSum / preCount).toFixed(2) + '<span class="stat-unit">kWh</span>' : '—';
+      document.getElementById('bm-post').innerHTML =
+        postCount ? (postSum / postCount).toFixed(2) + '<span class="stat-unit">kWh</span>' : '—';
+
+      batteryChart = new Chart(document.getElementById('battery-chart'), {
+        type: 'bar',
+        data: {
+          labels: days.map(d => d.date),
+          datasets: [{
+            data: days.map(d => d.daytime_charge_kwh),
+            backgroundColor: days.map((_, i) =>
+              switchIdx < 0 || i < switchIdx ? '#3b82f680' : '#22c55e80'),
+            borderColor: days.map((_, i) =>
+              switchIdx < 0 || i < switchIdx ? '#3b82f6' : '#22c55e'),
+            borderWidth: 1,
+            barPercentage: 1.0,
+            categoryPercentage: 0.9,
+          }],
+        },
+        options: {
+          ...chartDefaults,
+          plugins: {
+            ...chartDefaults.plugins,
+            verticalLine: { index: switchIdx },
+            tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(2)} kWh` } },
+          },
+          scales: {
+            x: { ...darkAxis, ticks: { ...darkAxis.ticks, maxTicksLimit: 12 } },
+            y: { ...darkAxis, ticks: { ...darkAxis.ticks, callback: v => v.toFixed(1) } },
+          },
+        },
+      });
+    }
+
+    function renderCharging(result) {
+      if (chargingChart) chargingChart.destroy();
+      const days = result.days || [];
+      const breakeven = result.breakeven_yield_kwh || 0;
+      const seasons = result.seasons || {};
+
+      const depletedCount = days.filter(d => d.depleted).length;
+      document.getElementById('co-threshold').innerHTML =
+        breakeven.toFixed(1) + '<span class="stat-unit">kWh</span>';
+      document.getElementById('co-depleted').textContent =
+        `${depletedCount} / ${days.length}`;
+
+      chargingChart = new Chart(document.getElementById('charging-chart'), {
+        type: 'bar',
+        data: {
+          labels: days.map(d => d.date),
+          datasets: [
+            {
+              type: 'bar',
+              label: 'Solar yield',
+              data: days.map(d => d.total_yield_kwh),
+              backgroundColor: days.map(d => d.depleted ? '#ef444466' : '#22c55e40'),
+              borderColor:     days.map(d => d.depleted ? '#ef4444'   : '#22c55e'),
+              borderWidth: 1,
+              yAxisID: 'y',
+              barPercentage: 1.0,
+              categoryPercentage: 0.9,
+            },
+            {
+              type: 'line',
+              label: 'Min SoC',
+              data: days.map(d => d.min_soc),
+              borderColor: '#3b82f6',
+              backgroundColor: 'transparent',
+              pointRadius: 0,
+              tension: 0.3,
+              yAxisID: 'y1',
+            },
+            {
+              type: 'line',
+              label: '15% threshold',
+              data: days.map(() => 15),
+              borderColor: '#f59e0b80',
+              borderDash: [4, 4],
+              borderWidth: 1.5,
+              pointRadius: 0,
+              yAxisID: 'y1',
+            },
+          ],
+        },
+        options: {
+          ...chartDefaults,
+          plugins: {
+            legend: {
+              display: true,
+              labels: {
+                color: '#9ca3af',
+                font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 },
+                filter: item => item.text !== '15% threshold',
+              },
+            },
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  if (ctx.dataset.label === '15% threshold') return null;
+                  if (ctx.dataset.label === 'Min SoC') return ` min SoC: ${ctx.parsed.y.toFixed(0)}%`;
+                  return ` yield: ${ctx.parsed.y.toFixed(1)} kWh`;
+                },
+              },
+            },
+          },
+          scales: {
+            x: { ...darkAxis, ticks: { ...darkAxis.ticks, maxTicksLimit: 12 } },
+            y: {
+              ...darkAxis,
+              position: 'left',
+              title: { display: true, text: 'Solar yield (kWh)', color: '#6b7280',
+                font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 } },
+              ticks: { ...darkAxis.ticks, callback: v => v + ' kWh' },
+            },
+            y1: {
+              ...darkAxis,
+              position: 'right',
+              min: 0, max: 100,
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: 'Min SoC (%)', color: '#6b7280',
+                font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 } },
+              ticks: { ...darkAxis.ticks, callback: v => v + '%' },
+            },
+          },
+        },
+      });
+
+      const seasonOrder = ['spring', 'summer', 'autumn', 'winter'];
+      const table = document.getElementById('co-seasons-table');
+      table.innerHTML =
+        `<tr style="color:#4b5563;border-bottom:1px solid #1e1e2e">
+           <th style="text-align:left;padding:8px 4px">Season</th>
+           <th style="text-align:right;padding:8px 4px">Threshold</th>
+           <th style="text-align:right;padding:8px 4px">Depleted days</th>
+         </tr>` +
+        seasonOrder.map(s => {
+          const st = seasons[s];
+          if (!st) return '';
+          const pct = st.total_days ? Math.round(100 * st.depleted_days / st.total_days) : 0;
+          return `<tr style="border-bottom:1px solid #1e1e2e">
+            <td style="padding:6px 4px;text-transform:capitalize;color:#d1d5db">${s}</td>
+            <td style="text-align:right;padding:6px 4px;color:#a78bfa">${st.breakeven_yield_kwh.toFixed(1)} kWh</td>
+            <td style="text-align:right;padding:6px 4px;color:#9ca3af">${st.depleted_days} / ${st.total_days} (${pct}%)</td>
+          </tr>`;
+        }).join('');
+    }
+
+    async function loadCharging() {
+      if (chargingLoaded) return;
+      setLoading(true);
+      try {
+        const res = await fetch('/api/battery/charging-optimisation');
+        if (!res.ok) return;
+        renderCharging(await res.json());
+        chargingLoaded = true;
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function loadBattery() {
+      if (batteryLoaded) return;
+      setLoading(true);
+      try {
+        const res = await fetch('/api/battery/mode-switch');
+        if (!res.ok) return;
+        renderBattery(await res.json());
+        batteryLoaded = true;
+      } finally {
+        setLoading(false);
+      }
+    }
+
     async function loadAnalysis() {
       const qs = `from=${fmtDate(rangeStart)}&to=${fmtDate(rangeEnd())}`;
       setLoading(true);
@@ -614,6 +979,8 @@
       btn.addEventListener('click', () => {
         switchView(btn.dataset.view);
         if (btn.dataset.view === 'analysis') loadAnalysis();
+        if (btn.dataset.view === 'battery')  loadBattery();
+        if (btn.dataset.view === 'charging') loadCharging();
       }));
     document.querySelectorAll('.dir-tab').forEach(btn =>
       btn.addEventListener('click', () => {

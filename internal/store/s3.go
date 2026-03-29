@@ -95,6 +95,25 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &nsk)
 }
 
+// List returns all object keys under prefix.
+func (c *Client) List(ctx context.Context, prefix string) ([]string, error) {
+	paginator := s3.NewListObjectsV2Paginator(c.s3, &s3.ListObjectsV2Input{
+		Bucket: aws.String(c.bucket),
+		Prefix: aws.String(prefix),
+	})
+	var keys []string
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list objects: %w", err)
+		}
+		for _, obj := range page.Contents {
+			keys = append(keys, aws.ToString(obj.Key))
+		}
+	}
+	return keys, nil
+}
+
 // Exists returns true if key exists in the bucket.
 func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 	_, err := c.s3.HeadObject(ctx, &s3.HeadObjectInput{
