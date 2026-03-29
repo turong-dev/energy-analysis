@@ -14,8 +14,6 @@
 | Phase 4: Agile battery optimisation model | ❌ Not started | |
 | Phase 4: Tariff explorer | ❌ Not started | |
 
-**Known gap vs. plan:** `solax/processed/` (normalised Parquet) was never implemented — only raw JSON stored. The analysis layer reads directly from raw S3 data.
-
 ---
 
 ## Project Brief for Claude Code
