@@ -3,3 +3,7 @@ solax/.venv
 solax/examples
 
 infra/Pulumi.dev.yaml
+
+config.yaml
+
+bin/
