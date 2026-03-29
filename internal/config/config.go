@@ -25,6 +25,7 @@ type SolaxConfig struct {
 
 type OctopusConfig struct {
 	APIKey            string       `yaml:"api_key"`
+	AccountID         string       `yaml:"account_id"`
 	MPANImport        string       `yaml:"mpan_import"`
 	MPANExport        string       `yaml:"mpan_export"`
 	MeterSerialImport string       `yaml:"meter_serial_import"`
@@ -77,6 +78,7 @@ func Load(path string) (*Config, error) {
 //	SOLAX_CRYPTO_KEY      solax.crypto_key
 //	SOLAX_CRYPTO_IV       solax.crypto_iv
 //	OCTOPUS_API_KEY       octopus.api_key
+//	OCTOPUS_ACCOUNT_ID    octopus.account_id
 //	S3_ENDPOINT           s3.endpoint
 //	CACHE_DIR             cache_dir (default: .cache)
 //	AWS_ACCESS_KEY_ID     S3 credentials (SDK)
@@ -93,6 +95,7 @@ func (c *Config) applyEnv() {
 	overrideStr(&c.Solax.CryptoKey, "SOLAX_CRYPTO_KEY")
 	overrideStr(&c.Solax.CryptoIV, "SOLAX_CRYPTO_IV")
 	overrideStr(&c.Octopus.APIKey, "OCTOPUS_API_KEY")
+	overrideStr(&c.Octopus.AccountID, "OCTOPUS_ACCOUNT_ID")
 	overrideStr(&c.S3.Endpoint, "S3_ENDPOINT")
 	overrideStr(&c.CacheDir, "CACHE_DIR")
 	if c.CacheDir == "" {

@@ -252,46 +252,46 @@
   <div id="view-analysis" style="display:none">
     <div class="scenario-row">
       <div class="scenario-group">
-        <span class="scenario-group-label">Import</span>
+        <span class="scenario-group-label">Compare import</span>
         <div class="scenario-tabs">
           <button class="scenario-tab active" data-stype="import" data-sval="go">Go</button>
           <button class="scenario-tab" data-stype="import" data-sval="agile">Agile</button>
         </div>
       </div>
       <div class="scenario-group">
-        <span class="scenario-group-label">Export</span>
+        <span class="scenario-group-label">Compare export</span>
         <div class="scenario-tabs">
-          <button class="scenario-tab" data-stype="export" data-sval="fixed">Fixed</button>
-          <button class="scenario-tab active" data-stype="export" data-sval="agile">Agile</button>
+          <button class="scenario-tab active" data-stype="export" data-sval="fixed">Fixed</button>
+          <button class="scenario-tab" data-stype="export" data-sval="agile">Agile</button>
         </div>
       </div>
     </div>
 
     <div class="stats">
       <div class="stat">
-        <div class="stat-label">Go actual</div>
-        <div class="stat-value" id="an-go">—</div>
+        <div class="stat-label">Actual</div>
+        <div class="stat-value" id="an-actual">—</div>
       </div>
       <div class="stat">
-        <div class="stat-label" id="an-scenario-label">Hypothetical</div>
-        <div class="stat-value" id="an-agile">—</div>
+        <div class="stat-label" id="an-cmp-label">Full Go</div>
+        <div class="stat-value" id="an-cmp">—</div>
       </div>
       <div class="stat">
-        <div class="stat-label">Saving vs Go actual</div>
+        <div class="stat-label" id="an-saving-label">Saving vs Full Go</div>
         <div class="stat-value" id="an-saving">—</div>
       </div>
     </div>
 
     <div class="card">
       <div class="card-header">
-        <div class="card-label">Daily net cost · pence · Go (actual) vs scenario</div>
+        <div class="card-label">Daily net cost · pence · Actual vs comparison</div>
         <button class="info-btn" onclick="toggleInfo(this)">info</button>
       </div>
       <div class="card-info">
-        Daily net energy cost for each tariff: import spend minus export income, in pence.
-        Go actual (green) is what you paid; the amber bars show the hypothetical scenario selected above.
-        On days where the scenario bar is lower, that tariff would have been cheaper.
-        Use the scenario selectors to mix and match import and export tariffs independently.
+        Daily net energy cost: import spend minus export income, in pence.
+        Actual (green) reflects the tariff you were genuinely on each day — Go or Agile as your agreement history shows.
+        The amber bars show the selected hypothetical: what the same consumption would have cost under Full Go or Full Agile throughout.
+        Days where the amber bar is lower mean the comparison tariff would have been cheaper.
       </div>
       <div class="chart-wrap" style="height:220px"><canvas id="analysis-chart"></canvas></div>
       <div class="chart-overview-wrap"><canvas id="analysis-chart-overview"></canvas></div>
@@ -299,13 +299,12 @@
 
     <div class="card">
       <div class="card-header">
-        <div class="card-label" id="saving-chart-label">Cumulative saving vs Go actual · £ · positive = scenario cheaper</div>
+        <div class="card-label" id="saving-chart-label">Cumulative saving vs comparison · £ · positive = actual cheaper</div>
         <button class="info-btn" onclick="toggleInfo(this)">info</button>
       </div>
       <div class="card-info">
-        Running total of the cost difference between the selected scenario and your actual Go tariff, in pounds.
-        A rising line means the scenario is getting cheaper over time relative to Go; a falling line means Go is winning.
-        This is the headline number: how much you would have saved (or lost) had you been on the alternative tariff since the data begins.
+        Running total of the cost difference between the selected comparison and your actual tariff, in pounds.
+        A rising line means your actual choices are saving you money relative to the comparison; a falling line means the comparison would have been cheaper.
       </div>
       <div class="chart-wrap" style="height:180px"><canvas id="saving-chart"></canvas></div>
       <div class="chart-overview-wrap"><canvas id="saving-chart-overview"></canvas></div>
@@ -426,8 +425,8 @@
     })();
 
     let ratesChart, consumptionChart, batteryChart, chargingChart;
-    let importScenario = 'go';   // 'go' | 'agile'
-    let exportScenario = 'agile'; // 'fixed' | 'agile'
+    let cmpImport = 'go';    // 'go' | 'agile'
+    let cmpExport = 'fixed'; // 'fixed' | 'agile'
     let lastAnalysisData = null;
     let batteryLoaded = false;
     let chargingLoaded = false;
@@ -501,17 +500,55 @@
       },
     });
 
-    function scenarioNet(day) {
-      const imp = importScenario === 'agile' ? day.agile_import : day.go_import;
-      const exp = exportScenario === 'agile' ? day.agile_export : day.fixed_export;
-      return imp - exp;
+    // Custom plugin: draws vertical dashed lines at tariff switch dates with a label,
+    // and optionally a static label at the left edge showing the initial tariff.
+    Chart.register({
+      id: 'tariffSwitches',
+      afterDraw(chart, _, opts) {
+        const lines   = (opts && opts.lines)   || [];
+        const initial = opts && opts.initial;
+        if (!lines.length && !initial) return;
+        const xScale = chart.scales.x;
+        if (!xScale) return;
+        const { top, bottom, left } = chart.chartArea;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.font = "10px 'JetBrains Mono','SF Mono',monospace";
+        ctx.textAlign = 'left';
+        if (initial) {
+          ctx.fillStyle = '#a78bfa';
+          ctx.fillText(initial, left + 4, top + 12);
+        }
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1.5;
+        for (const { date, label } of lines) {
+          const x = xScale.getPixelForValue(date);
+          if (x == null || isNaN(x)) continue;
+          ctx.strokeStyle = '#a78bfa';
+          ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#a78bfa';
+          ctx.fillText(label, x + 3, top + 12);
+          ctx.setLineDash([4, 4]);
+        }
+        ctx.restore();
+      },
+    });
+
+    function cmpImportCost(day) {
+      return cmpImport === 'agile' ? day.agile_import : day.go_import;
+    }
+    function cmpExportCost(day) {
+      return cmpExport === 'agile' ? day.agile_export : day.go_export;
+    }
+    function cmpNet(day) {
+      return cmpImportCost(day) - cmpExportCost(day);
     }
 
-    function scenarioLabel() {
-      if (importScenario === 'go' && exportScenario === 'fixed') return 'Go (same as actual)';
-      if (importScenario === 'agile' && exportScenario === 'agile') return 'Full Agile';
-      if (importScenario === 'agile') return 'Agile import + Fixed export';
-      return 'Go import + Agile export';
+    function cmpLabel() {
+      const i = cmpImport === 'agile' ? 'Agile import' : 'Go import';
+      const e = cmpExport === 'agile' ? 'Agile export' : 'Fixed export';
+      return i + ' / ' + e;
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -787,21 +824,37 @@
 
     function pence(v) { return '£' + (v / 100).toFixed(2); }
 
-    function renderAnalysis(days) {
+    function renderAnalysis(result) {
       if (analysisChart) analysisChart.destroy();
       if (savingChart)   savingChart.destroy();
 
-      const labels      = days.map(d => d.date);
-      const goNets      = days.map(d => d.go_net);
-      const scenarioNets = days.map(d => scenarioNet(d));
+      const days = (result && result.days) || [];
 
-      const totalScenario = scenarioNets.reduce((a,b) => a+b, 0);
-      const totalGo       = goNets.reduce((a,b) => a+b, 0);
-      const totalSaving   = totalGo - totalScenario;
+      const labels     = days.map(d => d.date);
 
-      document.getElementById('an-scenario-label').textContent = scenarioLabel();
-      document.getElementById('an-agile').textContent = pence(totalScenario);
-      document.getElementById('an-go').textContent    = pence(totalGo);
+      // Build tariff switch lines from import_periods, only for boundaries within the visible window.
+      const periods = (result && result.import_periods) || [];
+      const firstDate = labels.length ? labels[0] : null;
+      const lastDate  = labels.length ? labels[labels.length - 1] : null;
+      const switchLines = periods
+        .slice(1)
+        .map(p => ({ date: p.from, label: '→ ' + p.tariff }))
+        .filter(l => firstDate && lastDate && l.date >= firstDate && l.date <= lastDate);
+      // Find the tariff active at the start of the visible window.
+      const activePeriod = firstDate && periods.reduce((best, p) =>
+        p.from <= firstDate && (!best || p.from > best.from) ? p : best, null);
+      const initialTariff = activePeriod ? activePeriod.tariff : null;
+      const actualNets = days.map(d => d.actual_net);
+      const cmpNets    = days.map(d => cmpNet(d));
+
+      const totalActual = actualNets.reduce((a,b) => a+b, 0);
+      const totalCmp    = cmpNets.reduce((a,b) => a+b, 0);
+      const totalSaving = totalCmp - totalActual; // positive = actual cheaper
+
+      document.getElementById('an-cmp-label').textContent    = cmpLabel();
+      document.getElementById('an-saving-label').textContent = 'Saving vs ' + cmpLabel();
+      document.getElementById('an-actual').textContent = pence(totalActual);
+      document.getElementById('an-cmp').textContent    = pence(totalCmp);
       const savingEl = document.getElementById('an-saving');
       savingEl.textContent = (totalSaving >= 0 ? '+' : '') + pence(totalSaving);
       savingEl.style.color = totalSaving >= 0 ? '#2ecc40' : '#ff4136';
@@ -812,15 +865,15 @@
           labels,
           datasets: [
             {
-              label: 'Go actual',
-              data: goNets,
+              label: 'Actual',
+              data: actualNets,
               backgroundColor: '#22c55e80',
               borderColor: '#22c55e',
               borderWidth: 1,
             },
             {
-              label: scenarioLabel(),
-              data: scenarioNets,
+              label: cmpLabel(),
+              data: cmpNets,
               backgroundColor: '#f59e0b80',
               borderColor: '#f59e0b',
               borderWidth: 1,
@@ -835,6 +888,7 @@
               labels: { color: '#9ca3af', font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 } },
             },
             zoom: zoomConfig,
+            tariffSwitches: { lines: switchLines, initial: initialTariff },
             tooltip: { callbacks: { label: ctx => ` ${pence(ctx.parsed.y)}` } },
           },
           scales: {
@@ -844,9 +898,9 @@
         },
       });
 
-      // cumulative saving line
+      // cumulative saving: comparison - actual (positive = actual cheaper)
       let cum = 0;
-      const cumData = days.map(d => { cum += (d.go_net - scenarioNet(d)); return cum / 100; });
+      const cumData = days.map(d => { cum += (cmpNet(d) - d.actual_net); return cum / 100; });
       const lineColor = cum >= 0 ? '#2ecc40' : '#ff4136';
 
       savingChart = new Chart(document.getElementById('saving-chart'), {
@@ -867,6 +921,7 @@
           plugins: {
             legend: { display: false },
             zoom: zoomConfig,
+            tariffSwitches: { lines: switchLines, initial: initialTariff },
             tooltip: { callbacks: { label: ctx => ` £${ctx.parsed.y.toFixed(2)}` } },
           },
           scales: {
@@ -1077,7 +1132,7 @@
         const res = await fetch(`/api/analysis?${qs}`);
         if (!res.ok) return;
         lastAnalysisData = await res.json();
-        renderAnalysis(lastAnalysisData || []);
+        renderAnalysis(lastAnalysisData || {});
       } finally {
         setLoading(false);
       }
@@ -1117,13 +1172,12 @@
         loadData();
       }));
 
-    document.querySelectorAll('.scenario-tab').forEach(btn =>
+    document.querySelectorAll('.scenario-tab[data-stype]').forEach(btn =>
       btn.addEventListener('click', () => {
-        const type = btn.dataset.stype;
-        const val  = btn.dataset.sval;
-        if (type === 'import') importScenario = val;
-        else exportScenario = val;
-        document.querySelectorAll(`.scenario-tab[data-stype="${type}"]`).forEach(b =>
+        const stype = btn.dataset.stype;
+        if (stype === 'import') cmpImport = btn.dataset.sval;
+        else cmpExport = btn.dataset.sval;
+        document.querySelectorAll(`.scenario-tab[data-stype="${stype}"]`).forEach(b =>
           b.classList.toggle('active', b === btn));
         if (lastAnalysisData) renderAnalysis(lastAnalysisData);
       }));

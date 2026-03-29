@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"energy-utility/internal/config"
+	"energy-utility/internal/octopus"
 	"energy-utility/internal/store"
 )
 
@@ -43,7 +44,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/rates", ratesHandler(s3))
 	mux.HandleFunc("GET /api/consumption", consumptionHandler(s3))
-	mux.HandleFunc("GET /api/analysis", analysisHandler(s3, &cfg.Octopus))
+	oc := octopus.NewClient(cfg.Octopus.APIKey)
+	mux.HandleFunc("GET /api/analysis", analysisHandler(s3, &cfg.Octopus, oc))
 	mux.HandleFunc("GET /api/battery/mode-switch", modeSwitchHandler(s3))
 	mux.HandleFunc("GET /api/battery/charging-optimisation", chargingOptHandler(s3))
 	mux.Handle("/", http.FileServerFS(sub))

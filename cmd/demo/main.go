@@ -29,7 +29,7 @@ type demoData struct {
 	RatesExport       []dataPoint              `json:"rates-export"`
 	ConsumptionImport []dataPoint              `json:"consumption-import"`
 	ConsumptionExport []dataPoint              `json:"consumption-export"`
-	Analysis          []analysis.DayCost       `json:"analysis"`
+	Analysis          analysis.AnalysisResult  `json:"analysis"`
 	ModeSwitch        analysis.ModeSwitchResult `json:"battery-mode-switch"`
 	Charging          analysis.ChargingOptResult `json:"battery-charging"`
 }
@@ -113,8 +113,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("analysis export consumption: %v", err)
 	}
-	d.Analysis = analysis.Calculate(importRates, exportRates, importCons, exportCons, &cfg.Octopus)
-	log.Printf("fetched analysis (%d days)", len(d.Analysis))
+
+	var importAgreements, exportAgreements []octopus.TariffAgreement
+	if cfg.Octopus.AccountID != "" {
+		oc := octopus.NewClient(cfg.Octopus.APIKey)
+		imp, exp, aerr := oc.FetchAgreements(ctx, cfg.Octopus.AccountID)
+		if aerr != nil {
+			log.Printf("warn: fetch agreements: %v (falling back to Go tariff)", aerr)
+		} else {
+			importAgreements = imp
+			exportAgreements = exp
+			log.Printf("fetched agreements: %d import, %d export", len(imp), len(exp))
+		}
+	}
+
+	d.Analysis = analysis.Calculate(importRates, exportRates, importCons, exportCons, importAgreements, exportAgreements, &cfg.Octopus)
+	log.Printf("fetched analysis (%d days)", len(d.Analysis.Days))
 
 	solaxDays, err := solax.ReadDays(ctx, s3)
 	if err != nil {
@@ -177,7 +191,7 @@ const fetchShim = `(function(){
   var MAP={
     '/api/rates':function(p){return filterByDate(D[p.get('direction')==='export'?'rates-export':'rates-import'],p.get('from'),p.get('to'));},
     '/api/consumption':function(p){return filterByDate(D[p.get('direction')==='export'?'consumption-export':'consumption-import'],p.get('from'),p.get('to'));},
-    '/api/analysis':function(p){return filterByDate(D['analysis'],p.get('from'),p.get('to'));},
+    '/api/analysis':function(p){var a=D['analysis']||{};return {days:filterByDate(a.days,p.get('from'),p.get('to')),import_periods:a.import_periods||[]};},
     '/api/battery/mode-switch':function(){return D['battery-mode-switch'];},
     '/api/battery/charging-optimisation':function(){return D['battery-charging'];}
   };

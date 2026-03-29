@@ -186,6 +186,67 @@ func (c *Client) FetchRates(ctx context.Context, productCode, region string, fro
 }
 
 // ---------------------------------------------------------------------------
+// Account agreements
+// ---------------------------------------------------------------------------
+
+// FetchAgreements returns the tariff agreement history for the import and export
+// electricity meter points on the given Octopus account.
+func (c *Client) FetchAgreements(ctx context.Context, accountID string) (importAgreements, exportAgreements []TariffAgreement, err error) {
+	url := fmt.Sprintf("%s/accounts/%s/", apiBase, accountID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.SetBasicAuth(c.apiKey, "")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, nil, fmt.Errorf("accounts API HTTP %d: %s", resp.StatusCode, body)
+	}
+
+	var account struct {
+		Properties []struct {
+			ElectricityMeterPoints []struct {
+				IsExport   bool `json:"is_export"`
+				Agreements []struct {
+					TariffCode string     `json:"tariff_code"`
+					ValidFrom  time.Time  `json:"valid_from"`
+					ValidTo    *time.Time `json:"valid_to"`
+				} `json:"agreements"`
+			} `json:"electricity_meter_points"`
+		} `json:"properties"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&account); err != nil {
+		return nil, nil, fmt.Errorf("decode account response: %w", err)
+	}
+
+	for _, prop := range account.Properties {
+		for _, mp := range prop.ElectricityMeterPoints {
+			agreements := make([]TariffAgreement, len(mp.Agreements))
+			for i, a := range mp.Agreements {
+				agreements[i] = TariffAgreement{
+					TariffCode: a.TariffCode,
+					ValidFrom:  a.ValidFrom,
+					ValidTo:    a.ValidTo,
+				}
+			}
+			if mp.IsExport {
+				exportAgreements = append(exportAgreements, agreements...)
+			} else {
+				importAgreements = append(importAgreements, agreements...)
+			}
+		}
+	}
+	return importAgreements, exportAgreements, nil
+}
+
+// ---------------------------------------------------------------------------
 // SMETS2 consumption
 // ---------------------------------------------------------------------------
 

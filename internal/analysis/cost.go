@@ -3,6 +3,7 @@ package analysis
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 	_ "time/tzdata"
 
@@ -20,64 +21,144 @@ func init() {
 	}
 }
 
-// DayCost holds the cost comparison for a single calendar day (London local).
+// DayCost holds the cost breakdown for a single calendar day (London local).
+//
+// Three cost scenarios are computed:
+//   - Actual: what was genuinely paid, using the tariff active under the account
+//     agreement at each slot (Go or Agile, as applicable). Falls back to Go if
+//     no agreement history is available.
+//   - Go: hypothetical cost had the Go tariff been active for the entire day.
+//   - Agile: hypothetical cost had Agile been active for the entire day.
 type DayCost struct {
-	Date        string  `json:"date"`         // YYYY-MM-DD
-	AgileImport float64 `json:"agile_import"` // pence
-	GoImport    float64 `json:"go_import"`    // pence
-	AgileExport float64 `json:"agile_export"` // pence
-	FixedExport float64 `json:"fixed_export"` // pence
-	AgileNet    float64 `json:"agile_net"`    // AgileImport - AgileExport
-	GoNet       float64 `json:"go_net"`       // GoImport - FixedExport
-	Saving      float64 `json:"saving"`       // GoNet - AgileNet (positive = Agile cheaper)
-	ImportKWh   float64 `json:"import_kwh"`
-	ExportKWh   float64 `json:"export_kwh"`
+	Date         string  `json:"date"`          // YYYY-MM-DD
+	ActualImport float64 `json:"actual_import"` // pence
+	ActualExport float64 `json:"actual_export"` // pence
+	ActualNet    float64 `json:"actual_net"`    // ActualImport - ActualExport
+	GoImport     float64 `json:"go_import"`     // pence
+	GoExport     float64 `json:"go_export"`     // pence (fixed export rate)
+	GoNet        float64 `json:"go_net"`        // GoImport - GoExport
+	AgileImport  float64 `json:"agile_import"`  // pence
+	AgileExport  float64 `json:"agile_export"`  // pence
+	AgileNet     float64 `json:"agile_net"`     // AgileImport - AgileExport
+	ImportKWh    float64 `json:"import_kwh"`
+	ExportKWh    float64 `json:"export_kwh"`
 }
 
-// Calculate computes daily cost comparisons between Agile and Go tariffs.
-// Slots with no matching Agile rate contribute zero cost (not an error).
+// TariffPeriod describes a period during which a specific tariff type was active.
+type TariffPeriod struct {
+	From   string  `json:"from"`            // YYYY-MM-DD
+	To     *string `json:"to,omitempty"`    // YYYY-MM-DD, nil = ongoing
+	Tariff string  `json:"tariff"`          // "Go" | "Agile" | "Unknown"
+}
+
+// AnalysisResult bundles the per-day cost breakdown with tariff switch metadata.
+type AnalysisResult struct {
+	Days          []DayCost      `json:"days"`
+	ImportPeriods []TariffPeriod `json:"import_periods"`
+}
+
+// AgreementsToPeriods converts raw tariff agreements into labelled display periods.
+func AgreementsToPeriods(agreements []octopus.TariffAgreement) []TariffPeriod {
+	periods := make([]TariffPeriod, len(agreements))
+	for i, a := range agreements {
+		tariff := "Unknown"
+		code := strings.ToUpper(a.TariffCode)
+		switch {
+		case strings.Contains(code, "AGILE"):
+			tariff = "Agile"
+		case strings.Contains(code, "-GO-"):
+			tariff = "Go"
+		}
+		var to *string
+		if a.ValidTo != nil {
+			s := a.ValidTo.Format("2006-01-02")
+			to = &s
+		}
+		periods[i] = TariffPeriod{From: a.ValidFrom.Format("2006-01-02"), To: to, Tariff: tariff}
+	}
+	return periods
+}
+
+// Calculate computes daily cost breakdowns across three scenarios: actual
+// (per-slot tariff from agreement history), hypothetical full-Go, and
+// hypothetical full-Agile.
+//
+// importAgreements and exportAgreements may be nil/empty, in which case
+// actual cost falls back to the Go tariff (preserving backward compatibility).
+//
+// Slots with no matching Agile rate contribute zero Agile cost (not an error).
 func Calculate(
 	importRates, exportRates []octopus.HalfHourlyRate,
 	importConsumption, exportConsumption []octopus.HalfHourlyConsumption,
+	importAgreements, exportAgreements []octopus.TariffAgreement,
 	cfg *config.OctopusConfig,
-) []DayCost {
+) AnalysisResult {
 	importRateMap := buildRateMap(importRates)
 	exportRateMap := buildRateMap(exportRates)
 
-	days := map[string]*DayCost{}
+	daysMap := map[string]*DayCost{}
 
 	get := func(date string) *DayCost {
-		if days[date] == nil {
-			days[date] = &DayCost{Date: date}
+		if daysMap[date] == nil {
+			daysMap[date] = &DayCost{Date: date}
 		}
-		return days[date]
+		return daysMap[date]
 	}
 
 	for _, c := range importConsumption {
 		date := c.IntervalStart.In(london).Format("2006-01-02")
 		d := get(date)
 		d.ImportKWh += c.Consumption
-		d.AgileImport += c.Consumption * importRateMap[c.IntervalStart.UTC().Truncate(time.Minute)]
-		d.GoImport += c.Consumption * goRateForSlot(c.IntervalStart, cfg)
+		agileRate := importRateMap[c.IntervalStart.UTC().Truncate(time.Minute)]
+		goRate := goRateForSlot(c.IntervalStart, cfg)
+		d.AgileImport += c.Consumption * agileRate
+		d.GoImport += c.Consumption * goRate
+		d.ActualImport += c.Consumption * actualImportRate(c.IntervalStart, importAgreements, agileRate, goRate)
 	}
 
 	for _, c := range exportConsumption {
 		date := c.IntervalStart.In(london).Format("2006-01-02")
 		d := get(date)
 		d.ExportKWh += c.Consumption
-		d.AgileExport += c.Consumption * exportRateMap[c.IntervalStart.UTC().Truncate(time.Minute)]
-		d.FixedExport += c.Consumption * cfg.ExportRateAt(c.IntervalStart)
+		agileRate := exportRateMap[c.IntervalStart.UTC().Truncate(time.Minute)]
+		fixedRate := cfg.ExportRateAt(c.IntervalStart)
+		d.AgileExport += c.Consumption * agileRate
+		d.GoExport += c.Consumption * fixedRate
+		d.ActualExport += c.Consumption * actualExportRate(c.IntervalStart, exportAgreements, agileRate, fixedRate)
 	}
 
-	result := make([]DayCost, 0, len(days))
-	for _, d := range days {
+	days := make([]DayCost, 0, len(daysMap))
+	for _, d := range daysMap {
+		d.ActualNet = d.ActualImport - d.ActualExport
+		d.GoNet = d.GoImport - d.GoExport
 		d.AgileNet = d.AgileImport - d.AgileExport
-		d.GoNet = d.GoImport - d.FixedExport
-		d.Saving = d.GoNet - d.AgileNet
-		result = append(result, *d)
+		days = append(days, *d)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Date < result[j].Date })
-	return result
+	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
+	return AnalysisResult{
+		Days:          days,
+		ImportPeriods: AgreementsToPeriods(importAgreements),
+	}
+}
+
+// actualImportRate returns the import rate for a slot based on the active
+// agreement. Falls back to goRate when no agreement covers the slot.
+func actualImportRate(t time.Time, agreements []octopus.TariffAgreement, agileRate, goRate float64) float64 {
+	a := octopus.AgreementAt(agreements, t)
+	if a != nil && a.IsAgile() {
+		return agileRate
+	}
+	return goRate
+}
+
+// actualExportRate returns the export rate for a slot based on the active
+// agreement. Falls back to fixedRate when no agreement covers the slot.
+func actualExportRate(t time.Time, agreements []octopus.TariffAgreement, agileRate, fixedRate float64) float64 {
+	a := octopus.AgreementAt(agreements, t)
+	if a != nil && a.IsAgile() {
+		return agileRate
+	}
+	return fixedRate
 }
 
 func buildRateMap(rates []octopus.HalfHourlyRate) map[time.Time]float64 {

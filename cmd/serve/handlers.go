@@ -2,12 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
-
-	"fmt"
 
 	"energy-utility/internal/analysis"
 	"energy-utility/internal/config"
@@ -138,8 +138,28 @@ func parseDateRange(r *http.Request) (from, to time.Time, err error) {
 	return from, to, nil
 }
 
-func analysisHandler(s3 store.Store, cfg *config.OctopusConfig) http.HandlerFunc {
+func analysisHandler(s3 store.Store, cfg *config.OctopusConfig, oc *octopus.Client) http.HandlerFunc {
+	// Agreements rarely change; fetch once per server process and cache in memory.
+	var (
+		once             sync.Once
+		importAgreements []octopus.TariffAgreement
+		exportAgreements []octopus.TariffAgreement
+	)
+
 	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.AccountID != "" {
+			once.Do(func() {
+				imp, exp, err := oc.FetchAgreements(r.Context(), cfg.AccountID)
+				if err != nil {
+					log.Printf("analysis: fetch agreements: %v (falling back to Go tariff)", err)
+					return
+				}
+				importAgreements = imp
+				exportAgreements = exp
+				log.Printf("analysis: loaded %d import + %d export tariff agreements", len(imp), len(exp))
+			})
+		}
+
 		from, to, err := parseDateRange(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -171,9 +191,9 @@ func analysisHandler(s3 store.Store, cfg *config.OctopusConfig) http.HandlerFunc
 			return
 		}
 
-		days := analysis.Calculate(importRates, exportRates, importConsumption, exportConsumption, cfg)
+		result := analysis.Calculate(importRates, exportRates, importConsumption, exportConsumption, importAgreements, exportAgreements, cfg)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(days)
+		json.NewEncoder(w).Encode(result)
 	}
 }
