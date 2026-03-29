@@ -31,6 +31,8 @@
   <script src="https://cdn.jsdelivr.net/npm/date-fns@3"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
   <script src="https://unpkg.com/htmx.org@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -121,6 +123,7 @@
       color: #6b7280; margin-bottom: 12px;
     }
     .chart-wrap { position: relative; height: 200px; }
+    .chart-overview-wrap { position: relative; height: 48px; margin-top: 6px; opacity: 0.6; }
 
     /* Rate legend */
     .rate-legend {
@@ -222,6 +225,7 @@
       <button class="dir-tab active" data-dir="import">Import</button>
       <button class="dir-tab" data-dir="export">Export</button>
     </div>
+    <button id="reset-zoom" class="nav-btn" style="display:none;color:#a78bfa;border-color:#a78bfa40" onclick="resetAllZoom()">reset zoom</button>
   </div>
 
   <div id="view-rates">
@@ -264,6 +268,7 @@
         <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#ff4136"></span>&gt; 40p</div>
       </div>
       <div class="chart-wrap"><canvas id="rates-chart"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="rates-chart-overview"></canvas></div>
     </div>
   </div>
 
@@ -312,6 +317,7 @@
         Use the scenario selectors to mix and match import and export tariffs independently.
       </div>
       <div class="chart-wrap" style="height:220px"><canvas id="analysis-chart"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="analysis-chart-overview"></canvas></div>
     </div>
 
     <div class="card">
@@ -325,6 +331,7 @@
         This is the headline number: how much you would have saved (or lost) had you been on the alternative tariff since the data begins.
       </div>
       <div class="chart-wrap" style="height:180px"><canvas id="saving-chart"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="saving-chart-overview"></canvas></div>
     </div>
   </div>
 
@@ -356,6 +363,7 @@
         The dashed vertical line marks the detected mode switch date.
       </div>
       <div class="chart-wrap" style="height:240px"><canvas id="battery-chart"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="battery-chart-overview"></canvas></div>
     </div>
   </div>
 
@@ -383,6 +391,7 @@
         The amber dashed line marks the 15% depletion threshold; the purple dashed line is the computed yield decision boundary.
       </div>
       <div class="chart-wrap" style="height:300px"><canvas id="charging-chart"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="charging-chart-overview"></canvas></div>
     </div>
     <div class="card">
       <div class="card-label">Seasonal breakdown</div>
@@ -418,6 +427,7 @@
         after solar generation and battery activity.
       </div>
       <div class="chart-wrap"><canvas id="consumption-chart"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="consumption-chart-overview"></canvas></div>
     </div>
   </div>
 
@@ -466,6 +476,28 @@
           ctx.strokeStyle = '#a78bfa';
           ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
         }
+        ctx.restore();
+      },
+    });
+
+    // Custom plugin: dims the non-selected region of an overview chart to show the zoomed window.
+    Chart.register({
+      id: 'zoomHighlight',
+      afterDatasetsDraw(chart, _, opts) {
+        if (opts == null || opts.min == null) return;
+        const xScale = chart.scales.x;
+        if (!xScale) return;
+        const { left, right, top, bottom } = chart.chartArea;
+        const x1 = Math.max(left, xScale.getPixelForValue(opts.min));
+        const x2 = Math.min(right, xScale.getPixelForValue(opts.max));
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        if (x1 > left) ctx.fillRect(left, top, x1 - left, bottom - top);
+        if (x2 < right) ctx.fillRect(x2, top, right - x2, bottom - top);
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x1, top, x2 - x1, bottom - top);
         ctx.restore();
       },
     });
@@ -530,6 +562,89 @@
       plugins: { legend: { display: false } },
     };
 
+    const zoomConfig = {
+      zoom: {
+        drag: { enabled: true, backgroundColor: 'rgba(59,130,246,0.1)', borderColor: '#3b82f640', borderWidth: 1 },
+        mode: 'x',
+        onZoomComplete: ({ chart }) => {
+          document.getElementById('reset-zoom').style.display = '';
+          const overview = Chart.getChart(chart.canvas.id + '-overview');
+          if (overview) {
+            overview.options.plugins.zoomHighlight = { min: chart.scales.x.min, max: chart.scales.x.max };
+            overview.update('none');
+          }
+        },
+      },
+    };
+
+    function resetAllZoom() {
+      [ratesChart, consumptionChart, analysisChart, savingChart, batteryChart, chargingChart]
+        .forEach(c => {
+          if (!c) return;
+          c.resetZoom();
+          const overview = Chart.getChart(c.canvas.id + '-overview');
+          if (overview) {
+            overview.options.plugins.zoomHighlight = {};
+            overview.update('none');
+          }
+        });
+      document.getElementById('reset-zoom').style.display = 'none';
+    }
+
+    function createOverview(mainChart) {
+      const overviewId = mainChart.canvas.id + '-overview';
+      const el = document.getElementById(overviewId);
+      if (!el) return;
+      const existing = Chart.getChart(el);
+      if (existing) existing.destroy();
+
+      const isTime = mainChart.options.scales.x && mainChart.options.scales.x.type === 'time';
+      const hasY1  = !!(mainChart.options.scales && mainChart.options.scales.y1);
+
+      const datasets = mainChart.data.datasets.map(ds => {
+        const d = {
+          data: ds.data,
+          backgroundColor: ds.backgroundColor,
+          borderColor: ds.borderColor,
+          borderWidth: 0,
+          pointRadius: 0,
+          fill: ds.fill || false,
+          tension: ds.tension || 0,
+          barPercentage: ds.barPercentage,
+          categoryPercentage: ds.categoryPercentage,
+        };
+        if (ds.type)     d.type     = ds.type;
+        if (ds.yAxisID)  d.yAxisID  = ds.yAxisID;
+        if (ds.borderDash) d.borderDash = ds.borderDash;
+        return d;
+      });
+
+      const scales = {
+        x: { display: false, ...(isTime ? { type: 'time' } : {}) },
+        y: { display: false },
+      };
+      if (hasY1) scales.y1 = { display: false, position: 'right',
+        min: mainChart.options.scales.y1.min, max: mainChart.options.scales.y1.max };
+
+      new Chart(el, {
+        type: mainChart.config.type,
+        data: { labels: mainChart.data.labels, datasets },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          events: [],
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: false },
+            zoom: { zoom: { drag: { enabled: false } } },
+            zoomHighlight: {},
+          },
+          scales,
+        },
+      });
+    }
+
     const darkAxis = {
       ticks: { color: '#6b7280', font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 } },
       grid: { color: '#1e1e2e' },
@@ -581,6 +696,7 @@
           },
           plugins: {
             ...chartDefaults.plugins,
+            zoom: zoomConfig,
             tooltip: {
               callbacks: {
                 label: ctx => ` ${ctx.parsed.y.toFixed(2)}p/kWh`,
@@ -589,6 +705,7 @@
           },
         },
       });
+      createOverview(ratesChart);
     }
 
     function renderConsumption(points) {
@@ -625,6 +742,7 @@
           },
           plugins: {
             ...chartDefaults.plugins,
+            zoom: zoomConfig,
             tooltip: {
               callbacks: {
                 label: ctx => ` ${ctx.parsed.y.toFixed(3)} kWh`,
@@ -633,6 +751,7 @@
           },
         },
       });
+      createOverview(consumptionChart);
     }
 
     // ── loading indicator ────────────────────────────────────────────────────
@@ -738,6 +857,7 @@
               display: true,
               labels: { color: '#9ca3af', font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 } },
             },
+            zoom: zoomConfig,
             tooltip: { callbacks: { label: ctx => ` ${pence(ctx.parsed.y)}` } },
           },
           scales: {
@@ -769,6 +889,7 @@
           ...chartDefaults,
           plugins: {
             legend: { display: false },
+            zoom: zoomConfig,
             tooltip: { callbacks: { label: ctx => ` £${ctx.parsed.y.toFixed(2)}` } },
           },
           scales: {
@@ -777,6 +898,8 @@
           },
         },
       });
+      createOverview(analysisChart);
+      createOverview(savingChart);
     }
 
     function renderBattery(result) {
@@ -817,6 +940,7 @@
           plugins: {
             ...chartDefaults.plugins,
             verticalLine: { index: switchIdx },
+            zoom: zoomConfig,
             tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(2)} kWh` } },
           },
           scales: {
@@ -825,6 +949,7 @@
           },
         },
       });
+      createOverview(batteryChart);
     }
 
     function renderCharging(result) {
@@ -888,6 +1013,7 @@
                 filter: item => item.text !== '15% threshold',
               },
             },
+            zoom: zoomConfig,
             tooltip: {
               callbacks: {
                 label: ctx => {
@@ -919,6 +1045,7 @@
           },
         },
       });
+      createOverview(chargingChart);
 
       const seasonOrder = ['spring', 'summer', 'autumn', 'winter'];
       const table = document.getElementById('co-seasons-table');
