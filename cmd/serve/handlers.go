@@ -21,7 +21,7 @@ type dataPoint struct {
 	V float64 `json:"v"`
 }
 
-func ratesHandler(s3 *store.Client) http.HandlerFunc {
+func ratesHandler(s3 store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		direction := r.URL.Query().Get("direction")
 		if direction == "" {
@@ -55,7 +55,7 @@ func ratesHandler(s3 *store.Client) http.HandlerFunc {
 	}
 }
 
-func consumptionHandler(s3 *store.Client) http.HandlerFunc {
+func consumptionHandler(s3 store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		direction := r.URL.Query().Get("direction")
 		if direction == "" {
@@ -89,7 +89,7 @@ func consumptionHandler(s3 *store.Client) http.HandlerFunc {
 	}
 }
 
-func chargingOptHandler(s3 *store.Client) http.HandlerFunc {
+func chargingOptHandler(s3 store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		days, err := solax.ReadDays(r.Context(), s3)
 		if err != nil {
@@ -103,7 +103,7 @@ func chargingOptHandler(s3 *store.Client) http.HandlerFunc {
 	}
 }
 
-func modeSwitchHandler(s3 *store.Client) http.HandlerFunc {
+func modeSwitchHandler(s3 store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		days, err := solax.ReadDays(r.Context(), s3)
 		if err != nil {
@@ -138,7 +138,7 @@ func parseDateRange(r *http.Request) (from, to time.Time, err error) {
 	return from, to, nil
 }
 
-func analysisHandler(s3 *store.Client, cfg *config.OctopusConfig) http.HandlerFunc {
+func analysisHandler(s3 store.Store, cfg *config.OctopusConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		from, to, err := parseDateRange(r)
 		if err != nil {

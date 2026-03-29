@@ -22,9 +22,14 @@ func main() {
 	}
 
 	ctx := context.Background()
-	s3, err := store.New(ctx, cfg.S3)
+	s3raw, err := store.New(ctx, cfg.S3)
 	if err != nil {
 		log.Fatalf("init s3: %v", err)
+	}
+	var s3 store.Store = s3raw
+	if cfg.CacheDir != "" {
+		s3 = store.NewCached(s3raw, cfg.CacheDir)
+		log.Printf("local cache: %s", cfg.CacheDir)
 	}
 
 	subcommand := flag.Arg(0)

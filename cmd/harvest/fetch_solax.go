@@ -14,7 +14,7 @@ import (
 
 const maxConsecutiveEmpty = 14
 
-func fetchSolax(ctx context.Context, cfg *config.Config, s3 *store.Client, since *time.Time) error {
+func fetchSolax(ctx context.Context, cfg *config.Config, s3 store.Store, since *time.Time) error {
 	client, err := solax.NewClient(cfg.Solax.Email, cfg.Solax.Password, cfg.Solax.CryptoKey, cfg.Solax.CryptoIV)
 	if err != nil {
 		return fmt.Errorf("create solax client: %w", err)

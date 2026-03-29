@@ -42,7 +42,7 @@ func ParseRaw(raw *Raw, date string) DayRecord {
 
 // ReadDays fetches all available DayRecords from S3, reading concurrently.
 // Missing or unreadable days are silently skipped.
-func ReadDays(ctx context.Context, s3c *store.Client) ([]DayRecord, error) {
+func ReadDays(ctx context.Context, s3c store.Store) ([]DayRecord, error) {
 	keys, err := s3c.List(ctx, "solax/raw/")
 	if err != nil {
 		return nil, fmt.Errorf("list solax days: %w", err)

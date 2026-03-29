@@ -14,7 +14,7 @@ import (
 // startDate is the earliest date we have SolaX data for.
 var solaxStart = time.Date(2025, 4, 24, 0, 0, 0, 0, time.UTC)
 
-func fetchOctopus(ctx context.Context, cfg *config.Config, s3 *store.Client) error {
+func fetchOctopus(ctx context.Context, cfg *config.Config, s3 store.Store) error {
 	client := octopus.NewClient(cfg.Octopus.APIKey)
 
 	region := cfg.Octopus.Region
@@ -44,7 +44,7 @@ func fetchOctopus(ctx context.Context, cfg *config.Config, s3 *store.Client) err
 	return nil
 }
 
-func fetchRates(ctx context.Context, client *octopus.Client, s3 *store.Client, direction, region string) error {
+func fetchRates(ctx context.Context, client *octopus.Client, s3 store.Store, direction, region string) error {
 	log.Printf("fetching agile %s rates...", direction)
 	now := time.Now().UTC()
 
@@ -94,7 +94,7 @@ func fetchRates(ctx context.Context, client *octopus.Client, s3 *store.Client, d
 	return nil
 }
 
-func fetchConsumption(ctx context.Context, client *octopus.Client, s3 *store.Client, direction, mpan, serial string) error {
+func fetchConsumption(ctx context.Context, client *octopus.Client, s3 store.Store, direction, mpan, serial string) error {
 	if mpan == "" || serial == "" {
 		log.Printf("skipping %s consumption: mpan/serial not configured", direction)
 		return nil

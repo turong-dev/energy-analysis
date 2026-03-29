@@ -11,7 +11,7 @@ import (
 // ReadRates loads all stored half-hourly Agile rates for the given direction
 // ("import" or "export") covering every month between from and to (inclusive).
 // Months not yet stored in S3 are silently skipped.
-func ReadRates(ctx context.Context, s3 *store.Client, direction string, from, to time.Time) ([]HalfHourlyRate, error) {
+func ReadRates(ctx context.Context, s3 store.Store, direction string, from, to time.Time) ([]HalfHourlyRate, error) {
 	var all []HalfHourlyRate
 	for m := monthStart(from); !m.After(to); m = m.AddDate(0, 1, 0) {
 		key := fmt.Sprintf("octopus/agile-%s/%d/%02d.json", direction, m.Year(), m.Month())
@@ -30,7 +30,7 @@ func ReadRates(ctx context.Context, s3 *store.Client, direction string, from, to
 // ReadConsumption loads all stored half-hourly meter readings for the given
 // direction ("import" or "export") covering every month between from and to.
 // Months not yet stored in S3 are silently skipped.
-func ReadConsumption(ctx context.Context, s3 *store.Client, direction string, from, to time.Time) ([]HalfHourlyConsumption, error) {
+func ReadConsumption(ctx context.Context, s3 store.Store, direction string, from, to time.Time) ([]HalfHourlyConsumption, error) {
 	var all []HalfHourlyConsumption
 	for m := monthStart(from); !m.After(to); m = m.AddDate(0, 1, 0) {
 		key := fmt.Sprintf("octopus/consumption/%s/%d/%02d.json", direction, m.Year(), m.Month())

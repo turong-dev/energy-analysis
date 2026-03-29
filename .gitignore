@@ -7,3 +7,5 @@ infra/Pulumi.dev.yaml
 config.yaml
 
 bin/
+
+.cache/

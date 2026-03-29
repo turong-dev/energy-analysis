@@ -25,9 +25,14 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	s3, err := store.New(context.Background(), cfg.S3)
+	s3raw, err := store.New(context.Background(), cfg.S3)
 	if err != nil {
 		log.Fatalf("init s3: %v", err)
+	}
+	var s3 store.Store = s3raw
+	if cfg.CacheDir != "" {
+		s3 = store.NewCached(s3raw, cfg.CacheDir)
+		log.Printf("local cache: %s", cfg.CacheDir)
 	}
 
 	sub, err := fs.Sub(uiFiles, "ui")

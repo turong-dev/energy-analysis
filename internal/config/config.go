@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	Solax   SolaxConfig   `yaml:"solax"`
-	Octopus OctopusConfig `yaml:"octopus"`
-	S3      S3Config      `yaml:"s3"`
+	Solax    SolaxConfig   `yaml:"solax"`
+	Octopus  OctopusConfig `yaml:"octopus"`
+	S3       S3Config      `yaml:"s3"`
+	CacheDir string        `yaml:"cache_dir"`
 }
 
 type SolaxConfig struct {
@@ -77,6 +78,7 @@ func Load(path string) (*Config, error) {
 //	SOLAX_CRYPTO_IV       solax.crypto_iv
 //	OCTOPUS_API_KEY       octopus.api_key
 //	S3_ENDPOINT           s3.endpoint
+//	CACHE_DIR             cache_dir (default: .cache)
 //	AWS_ACCESS_KEY_ID     S3 credentials (SDK)
 //	AWS_SECRET_ACCESS_KEY S3 credentials (SDK)
 func (c *Config) applyEnv() {
@@ -92,6 +94,10 @@ func (c *Config) applyEnv() {
 	overrideStr(&c.Solax.CryptoIV, "SOLAX_CRYPTO_IV")
 	overrideStr(&c.Octopus.APIKey, "OCTOPUS_API_KEY")
 	overrideStr(&c.S3.Endpoint, "S3_ENDPOINT")
+	overrideStr(&c.CacheDir, "CACHE_DIR")
+	if c.CacheDir == "" {
+		c.CacheDir = ".cache"
+	}
 }
 
 // GoRateAt returns the Go tariff rate in effect on the given date.

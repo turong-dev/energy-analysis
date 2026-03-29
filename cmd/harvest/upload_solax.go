@@ -17,7 +17,7 @@ const solaxDataDir = "solax/data"
 // uploadSolax reads all local solax/data/YYYY-MM-DD.json files and uploads
 // them to S3 under solax/raw/YYYY/MM/DD/daily-detail.json.
 // Files already present in S3 are skipped.
-func uploadSolax(ctx context.Context, s3 *store.Client) error {
+func uploadSolax(ctx context.Context, s3 store.Store) error {
 	entries, err := os.ReadDir(solaxDataDir)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", solaxDataDir, err)

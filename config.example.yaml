@@ -30,3 +30,7 @@ s3:
   region: "auto"
   # Credentials are read from the standard AWS credential chain:
   # AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY env vars, or ~/.aws/credentials
+
+# Local cache directory for S3 data (default: .cache, override with CACHE_DIR env var).
+# Set to empty string to disable caching.
+cache_dir: ".cache"
