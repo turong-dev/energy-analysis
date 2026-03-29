@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Energy Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/date-fns@3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <script src="https://unpkg.com/htmx.org@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      background: #0a0a0f;
+      color: #e2e2e8;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    /* Header */
+    .header { margin-bottom: 32px; }
+    .header-eyebrow {
+      font-size: 11px; letter-spacing: 4px; color: #6b7280;
+      text-transform: uppercase; margin-bottom: 8px;
+    }
+    .header h1 {
+      font-size: 22px; font-weight: 700; color: #f8fafc;
+      margin: 0; line-height: 1.3;
+    }
+    .header-sub { font-size: 12px; color: #4b5563; margin-top: 4px; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 2px; margin-bottom: 24px; }
+    .tab {
+      padding: 8px 16px; font-size: 11px; letter-spacing: 1px;
+      text-transform: uppercase; background: transparent;
+      color: #6b7280; border: 1px solid transparent;
+      border-radius: 4px; cursor: pointer; font-family: inherit;
+      transition: all 0.15s;
+    }
+    .tab.active {
+      background: #1e1e2e; color: #f8fafc; border-color: #2e2e3e;
+    }
+
+    /* Controls row */
+    .controls {
+      display: flex; align-items: center; gap: 16px;
+      margin-bottom: 24px; flex-wrap: wrap;
+    }
+    .nav { display: flex; align-items: center; gap: 8px; }
+    .nav-btn {
+      padding: 6px 12px; font-size: 11px; background: #111118;
+      color: #9ca3af; border: 1px solid #1e1e2e; border-radius: 4px;
+      cursor: pointer; font-family: inherit; transition: all 0.15s;
+    }
+    .nav-btn:hover { border-color: #3b82f6; color: #f8fafc; }
+    .nav-label {
+      font-size: 12px; color: #d1d5db; min-width: 190px; text-align: center;
+    }
+    .dir-tabs { display: flex; gap: 2px; }
+    .dir-tab {
+      padding: 6px 12px; font-size: 11px; letter-spacing: 1px;
+      text-transform: uppercase; background: transparent;
+      color: #6b7280; border: 1px solid transparent;
+      border-radius: 4px; cursor: pointer; font-family: inherit;
+    }
+    .dir-tab.active { background: #111118; color: #3b82f6; border-color: #3b82f640; }
+    .window-tabs { display: flex; gap: 2px; }
+    .window-tab {
+      padding: 6px 10px; font-size: 11px; letter-spacing: 1px;
+      text-transform: uppercase; background: transparent;
+      color: #6b7280; border: 1px solid transparent;
+      border-radius: 4px; cursor: pointer; font-family: inherit;
+    }
+    .window-tab.active { background: #111118; color: #a78bfa; border-color: #a78bfa40; }
+    #loader {
+      position: fixed; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, #3b82f6, #a78bfa, #3b82f6);
+      background-size: 200% 100%;
+      animation: shimmer 1.2s ease infinite;
+      display: none; z-index: 999;
+    }
+    #loader.active { display: block; }
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* Cards */
+    .card {
+      background: #111118; border: 1px solid #1e1e2e;
+      border-radius: 8px; padding: 20px; margin-bottom: 16px;
+    }
+    .card-label {
+      font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+      color: #6b7280; margin-bottom: 12px;
+    }
+    .chart-wrap { position: relative; height: 200px; }
+
+    /* Rate legend */
+    .rate-legend {
+      display: flex; gap: 12px; flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .rate-legend-item {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 10px; color: #6b7280;
+    }
+    .rate-legend-swatch {
+      display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    }
+
+    /* Scenario selector */
+    .scenario-row {
+      display: flex; gap: 16px; flex-wrap: wrap;
+      margin-bottom: 16px; align-items: center;
+    }
+    .scenario-group { display: flex; align-items: center; gap: 8px; }
+    .scenario-group-label {
+      font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+      color: #4b5563;
+    }
+    .scenario-tabs { display: flex; gap: 2px; }
+    .scenario-tab {
+      padding: 5px 10px; font-size: 11px; letter-spacing: 0.5px;
+      text-transform: uppercase; background: transparent;
+      color: #6b7280; border: 1px solid transparent;
+      border-radius: 4px; cursor: pointer; font-family: inherit;
+    }
+    .scenario-tab.active { background: #111118; color: #f59e0b; border-color: #f59e0b40; }
+
+    /* Stats row */
+    .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .stat {
+      background: #0e0e16; border: 1px solid #1e1e2e;
+      border-radius: 6px; padding: 12px 16px; flex: 1; min-width: 120px;
+    }
+    .stat-label {
+      font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+      color: #4b5563; margin-bottom: 4px;
+    }
+    .stat-value { font-size: 20px; font-weight: 700; color: #f8fafc; }
+    .stat-unit { font-size: 11px; color: #6b7280; margin-left: 3px; }
+  </style>
+</head>
+<body>
+  <div id="loader"></div>
+
+  <div class="header">
+    <div class="header-eyebrow">Solar &amp; Grid Energy</div>
+    <h1>Energy Dashboard</h1>
+    <div class="header-sub" id="header-sub">—</div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-view="rates">Agile Rates</button>
+    <button class="tab" data-view="consumption">Consumption</button>
+    <button class="tab" data-view="analysis">Analysis</button>
+  </div>
+
+  <div class="controls">
+    <div class="nav">
+      <button class="nav-btn" id="prev">&#8249; prev</button>
+      <span class="nav-label" id="range-label"></span>
+      <button class="nav-btn" id="next">next &#8250;</button>
+    </div>
+    <div class="window-tabs">
+      <button class="window-tab active" data-days="7">7D</button>
+      <button class="window-tab" data-days="30">30D</button>
+      <button class="window-tab" data-days="90">90D</button>
+      <button class="window-tab" data-days="180">6M</button>
+      <button class="window-tab" data-days="365">1Y</button>
+    </div>
+    <div class="dir-tabs">
+      <button class="dir-tab active" data-dir="import">Import</button>
+      <button class="dir-tab" data-dir="export">Export</button>
+    </div>
+  </div>
+
+  <div id="view-rates">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Avg rate</div>
+        <div class="stat-value" id="stat-avg">—<span class="stat-unit">p</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Min rate</div>
+        <div class="stat-value" id="stat-min">—<span class="stat-unit">p</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Max rate</div>
+        <div class="stat-value" id="stat-max">—<span class="stat-unit">p</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Slots &lt;10p</div>
+        <div class="stat-value" id="stat-cheap">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">p / kWh · half-hourly</div>
+      <div class="rate-legend">
+        <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#1a7a1a"></span>negative</div>
+        <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#2ecc40"></span>&lt; 10p</div>
+        <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#b5ea4a"></span>10–20p</div>
+        <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#ffdc00"></span>20–30p</div>
+        <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#ff851b"></span>30–40p</div>
+        <div class="rate-legend-item"><span class="rate-legend-swatch" style="background:#ff4136"></span>&gt; 40p</div>
+      </div>
+      <div class="chart-wrap"><canvas id="rates-chart"></canvas></div>
+    </div>
+  </div>
+
+  <div id="view-analysis" style="display:none">
+    <div class="scenario-row">
+      <div class="scenario-group">
+        <span class="scenario-group-label">Import</span>
+        <div class="scenario-tabs">
+          <button class="scenario-tab active" data-stype="import" data-sval="go">Go</button>
+          <button class="scenario-tab" data-stype="import" data-sval="agile">Agile</button>
+        </div>
+      </div>
+      <div class="scenario-group">
+        <span class="scenario-group-label">Export</span>
+        <div class="scenario-tabs">
+          <button class="scenario-tab" data-stype="export" data-sval="fixed">Fixed</button>
+          <button class="scenario-tab active" data-stype="export" data-sval="agile">Agile</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Go actual</div>
+        <div class="stat-value" id="an-go">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label" id="an-scenario-label">Hypothetical</div>
+        <div class="stat-value" id="an-agile">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Saving vs Go actual</div>
+        <div class="stat-value" id="an-saving">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Daily net cost · pence · Go (actual) vs Agile (hypothetical)</div>
+      <div class="chart-wrap" style="height:220px"><canvas id="analysis-chart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="card-label" id="saving-chart-label">Cumulative saving vs Go actual · £ · positive = scenario cheaper</div>
+      <div class="chart-wrap" style="height:180px"><canvas id="saving-chart"></canvas></div>
+    </div>
+  </div>
+
+  <div id="view-consumption" style="display:none">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Total</div>
+        <div class="stat-value" id="stat-total">—<span class="stat-unit">kWh</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Daily avg</div>
+        <div class="stat-value" id="stat-daily">—<span class="stat-unit">kWh</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Peak slot</div>
+        <div class="stat-value" id="stat-peak">—<span class="stat-unit">kWh</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">kWh · half-hourly</div>
+      <div class="chart-wrap"><canvas id="consumption-chart"></canvas></div>
+    </div>
+  </div>
+
+  <script>
+    // ── state ────────────────────────────────────────────────────────────────
+    let direction = 'import';
+    let currentView = 'rates';
+    let windowDays = 7;
+    let rangeStart = (() => {
+      const d = new Date();
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() - (windowDays - 1));
+      return d;
+    })();
+
+    let ratesChart, consumptionChart;
+    let importScenario = 'go';   // 'go' | 'agile'
+    let exportScenario = 'agile'; // 'fixed' | 'agile'
+    let lastAnalysisData = null;
+
+    function scenarioNet(day) {
+      const imp = importScenario === 'agile' ? day.agile_import : day.go_import;
+      const exp = exportScenario === 'agile' ? day.agile_export : day.fixed_export;
+      return imp - exp;
+    }
+
+    function scenarioLabel() {
+      if (importScenario === 'go' && exportScenario === 'fixed') return 'Go (same as actual)';
+      if (importScenario === 'agile' && exportScenario === 'agile') return 'Full Agile';
+      if (importScenario === 'agile') return 'Agile import + Fixed export';
+      return 'Go import + Agile export';
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    const fmtDate = d => d.toISOString().slice(0, 10);
+
+    function rangeEnd() {
+      const d = new Date(rangeStart);
+      d.setUTCDate(d.getUTCDate() + (windowDays - 1));
+      return d;
+    }
+
+    function rateColor(v) {
+      if (v < 0)  return '#1a7a1a';
+      if (v < 10) return '#2ecc40';
+      if (v < 20) return '#b5ea4a';
+      if (v < 30) return '#ffdc00';
+      if (v < 40) return '#ff851b';
+      return '#ff4136';
+    }
+
+    const chartDefaults = {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+    };
+
+    const darkAxis = {
+      ticks: { color: '#6b7280', font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 } },
+      grid: { color: '#1e1e2e' },
+      border: { color: '#2e2e3e' },
+    };
+
+    function timeAxis() {
+      return {
+        ...darkAxis,
+        type: 'time',
+        time: { unit: 'day', tooltipFormat: 'dd MMM HH:mm' },
+        ticks: { ...darkAxis.ticks, maxTicksLimit: 7 },
+      };
+    }
+
+    // ── charts ───────────────────────────────────────────────────────────────
+    function renderRates(points) {
+      if (ratesChart) ratesChart.destroy();
+      const vals = points.map(p => p.v);
+      const avg = vals.length ? (vals.reduce((a,b) => a+b, 0) / vals.length) : 0;
+      const mn  = vals.length ? Math.min(...vals) : 0;
+      const mx  = vals.length ? Math.max(...vals) : 0;
+      const cheap = vals.filter(v => v < 10).length;
+
+      document.getElementById('stat-avg').innerHTML   = avg.toFixed(1)  + '<span class="stat-unit">p</span>';
+      document.getElementById('stat-min').innerHTML   = mn.toFixed(1)   + '<span class="stat-unit">p</span>';
+      document.getElementById('stat-max').innerHTML   = mx.toFixed(1)   + '<span class="stat-unit">p</span>';
+      document.getElementById('stat-cheap').textContent = cheap;
+
+      ratesChart = new Chart(document.getElementById('rates-chart'), {
+        type: 'bar',
+        data: {
+          datasets: [{
+            data: points.map(p => ({ x: p.t, y: p.v })),
+            backgroundColor: points.map(p => rateColor(p.v)),
+            borderWidth: 0,
+            barPercentage: 1.0,
+            categoryPercentage: 1.0,
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          scales: {
+            x: timeAxis(),
+            y: {
+              ...darkAxis,
+              ticks: { ...darkAxis.ticks, callback: v => v + 'p' },
+            },
+          },
+          plugins: {
+            ...chartDefaults.plugins,
+            tooltip: {
+              callbacks: {
+                label: ctx => ` ${ctx.parsed.y.toFixed(2)}p/kWh`,
+              },
+            },
+          },
+        },
+      });
+    }
+
+    function renderConsumption(points) {
+      if (consumptionChart) consumptionChart.destroy();
+      const vals = points.map(p => p.v);
+      const total = vals.reduce((a,b) => a+b, 0);
+      const days  = (rangeEnd() - rangeStart) / 86400000 + 1;
+      const peak  = vals.length ? Math.max(...vals) : 0;
+
+      document.getElementById('stat-total').innerHTML = total.toFixed(2) + '<span class="stat-unit">kWh</span>';
+      document.getElementById('stat-daily').innerHTML = (total / days).toFixed(2) + '<span class="stat-unit">kWh</span>';
+      document.getElementById('stat-peak').innerHTML  = peak.toFixed(3)  + '<span class="stat-unit">kWh</span>';
+
+      consumptionChart = new Chart(document.getElementById('consumption-chart'), {
+        type: 'bar',
+        data: {
+          datasets: [{
+            data: points.map(p => ({ x: p.t, y: p.v })),
+            backgroundColor: '#3b82f680',
+            borderColor: '#3b82f6',
+            borderWidth: 1,
+            barPercentage: 1.0,
+            categoryPercentage: 1.0,
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          scales: {
+            x: timeAxis(),
+            y: {
+              ...darkAxis,
+              ticks: { ...darkAxis.ticks, callback: v => v.toFixed(2) },
+            },
+          },
+          plugins: {
+            ...chartDefaults.plugins,
+            tooltip: {
+              callbacks: {
+                label: ctx => ` ${ctx.parsed.y.toFixed(3)} kWh`,
+              },
+            },
+          },
+        },
+      });
+    }
+
+    // ── loading indicator ────────────────────────────────────────────────────
+    const loader = document.getElementById('loader');
+    let pending = 0;
+    function setLoading(on) {
+      pending = Math.max(0, pending + (on ? 1 : -1));
+      loader.classList.toggle('active', pending > 0);
+    }
+
+    // ── data loading ─────────────────────────────────────────────────────────
+    async function loadData() {
+      const from = fmtDate(rangeStart);
+      const to   = fmtDate(rangeEnd());
+      document.getElementById('range-label').textContent = from + ' – ' + to;
+      document.getElementById('header-sub').textContent  = direction + ' · ' + from + ' – ' + to;
+
+      const qs = `direction=${direction}&from=${from}&to=${to}`;
+      setLoading(true);
+      try {
+        const [ratesRes, consumptionRes] = await Promise.all([
+          fetch(`/api/rates?${qs}`),
+          fetch(`/api/consumption?${qs}`),
+        ]);
+        const [rates, consumption] = await Promise.all([
+          ratesRes.ok ? ratesRes.json() : [],
+          consumptionRes.ok ? consumptionRes.json() : [],
+        ]);
+        renderRates(rates || []);
+        renderConsumption(consumption || []);
+        if (currentView === 'analysis') loadAnalysis();
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // ── view switching ───────────────────────────────────────────────────────
+    function switchView(view) {
+      currentView = view;
+      document.getElementById('view-rates').style.display       = view === 'rates'       ? '' : 'none';
+      document.getElementById('view-consumption').style.display = view === 'consumption' ? '' : 'none';
+      document.getElementById('view-analysis').style.display    = view === 'analysis'    ? '' : 'none';
+      document.querySelectorAll('.tab').forEach(t =>
+        t.classList.toggle('active', t.dataset.view === view));
+      // direction is irrelevant for analysis (both directions are combined)
+      document.querySelector('.dir-tabs').style.visibility = view === 'analysis' ? 'hidden' : '';
+    }
+
+    // ── analysis ─────────────────────────────────────────────────────────────
+    let analysisChart, savingChart;
+
+    function pence(v) { return '£' + (v / 100).toFixed(2); }
+
+    function renderAnalysis(days) {
+      if (analysisChart) analysisChart.destroy();
+      if (savingChart)   savingChart.destroy();
+
+      const labels      = days.map(d => d.date);
+      const goNets      = days.map(d => d.go_net);
+      const scenarioNets = days.map(d => scenarioNet(d));
+
+      const totalScenario = scenarioNets.reduce((a,b) => a+b, 0);
+      const totalGo       = goNets.reduce((a,b) => a+b, 0);
+      const totalSaving   = totalGo - totalScenario;
+
+      document.getElementById('an-scenario-label').textContent = scenarioLabel();
+      document.getElementById('an-agile').textContent = pence(totalScenario);
+      document.getElementById('an-go').textContent    = pence(totalGo);
+      const savingEl = document.getElementById('an-saving');
+      savingEl.textContent = (totalSaving >= 0 ? '+' : '') + pence(totalSaving);
+      savingEl.style.color = totalSaving >= 0 ? '#2ecc40' : '#ff4136';
+
+      analysisChart = new Chart(document.getElementById('analysis-chart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Go actual',
+              data: goNets,
+              backgroundColor: '#22c55e80',
+              borderColor: '#22c55e',
+              borderWidth: 1,
+            },
+            {
+              label: scenarioLabel(),
+              data: scenarioNets,
+              backgroundColor: '#f59e0b80',
+              borderColor: '#f59e0b',
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          ...chartDefaults,
+          plugins: {
+            legend: {
+              display: true,
+              labels: { color: '#9ca3af', font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 } },
+            },
+            tooltip: { callbacks: { label: ctx => ` ${pence(ctx.parsed.y)}` } },
+          },
+          scales: {
+            x: { ...darkAxis, ticks: { ...darkAxis.ticks, maxTicksLimit: 10 } },
+            y: { ...darkAxis, ticks: { ...darkAxis.ticks, callback: v => pence(v) } },
+          },
+        },
+      });
+
+      // cumulative saving line
+      let cum = 0;
+      const cumData = days.map(d => { cum += (d.go_net - scenarioNet(d)); return cum / 100; });
+      const lineColor = cum >= 0 ? '#2ecc40' : '#ff4136';
+
+      savingChart = new Chart(document.getElementById('saving-chart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: cumData,
+            borderColor: lineColor,
+            backgroundColor: lineColor + '20',
+            fill: true,
+            pointRadius: 0,
+            tension: 0.3,
+          }],
+        },
+        options: {
+          ...chartDefaults,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: ctx => ` £${ctx.parsed.y.toFixed(2)}` } },
+          },
+          scales: {
+            x: { ...darkAxis, ticks: { ...darkAxis.ticks, maxTicksLimit: 10 } },
+            y: { ...darkAxis, ticks: { ...darkAxis.ticks, callback: v => '£' + v.toFixed(2) } },
+          },
+        },
+      });
+    }
+
+    async function loadAnalysis() {
+      const qs = `from=${fmtDate(rangeStart)}&to=${fmtDate(rangeEnd())}`;
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/analysis?${qs}`);
+        if (!res.ok) return;
+        lastAnalysisData = await res.json();
+        renderAnalysis(lastAnalysisData || []);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // ── event wiring ─────────────────────────────────────────────────────────
+    document.getElementById('prev').addEventListener('click', () => {
+      rangeStart.setUTCDate(rangeStart.getUTCDate() - windowDays); loadData();
+    });
+    document.getElementById('next').addEventListener('click', () => {
+      rangeStart.setUTCDate(rangeStart.getUTCDate() + windowDays); loadData();
+    });
+    document.querySelectorAll('.window-tab').forEach(btn =>
+      btn.addEventListener('click', () => {
+        windowDays = parseInt(btn.dataset.days, 10);
+        // anchor the end of the window to today
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+        rangeStart = new Date(today);
+        rangeStart.setUTCDate(today.getUTCDate() - (windowDays - 1));
+        document.querySelectorAll('.window-tab').forEach(b =>
+          b.classList.toggle('active', b === btn));
+        loadData();
+      }));
+    document.querySelectorAll('.tab').forEach(btn =>
+      btn.addEventListener('click', () => {
+        switchView(btn.dataset.view);
+        if (btn.dataset.view === 'analysis') loadAnalysis();
+      }));
+    document.querySelectorAll('.dir-tab').forEach(btn =>
+      btn.addEventListener('click', () => {
+        direction = btn.dataset.dir;
+        document.querySelectorAll('.dir-tab').forEach(b =>
+          b.classList.toggle('active', b === btn));
+        loadData();
+      }));
+
+    document.querySelectorAll('.scenario-tab').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const type = btn.dataset.stype;
+        const val  = btn.dataset.sval;
+        if (type === 'import') importScenario = val;
+        else exportScenario = val;
+        document.querySelectorAll(`.scenario-tab[data-stype="${type}"]`).forEach(b =>
+          b.classList.toggle('active', b === btn));
+        if (lastAnalysisData) renderAnalysis(lastAnalysisData);
+      }));
+
+    loadData();
+  </script>
+</body>
+</html>

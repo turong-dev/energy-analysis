@@ -1,0 +1,48 @@
+package main
+
+import (
+	"context"
+	"embed"
+	"flag"
+	"io/fs"
+	"log"
+	"net/http"
+
+	"energy-utility/internal/config"
+	"energy-utility/internal/store"
+)
+
+//go:embed ui
+var uiFiles embed.FS
+
+func main() {
+	cfgPath := flag.String("config", "config.yaml", "path to config file")
+	addr := flag.String("addr", ":8080", "listen address")
+	flag.Parse()
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+
+	s3, err := store.New(context.Background(), cfg.S3)
+	if err != nil {
+		log.Fatalf("init s3: %v", err)
+	}
+
+	sub, err := fs.Sub(uiFiles, "ui")
+	if err != nil {
+		log.Fatalf("ui embed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/rates", ratesHandler(s3))
+	mux.HandleFunc("GET /api/consumption", consumptionHandler(s3))
+	mux.HandleFunc("GET /api/analysis", analysisHandler(s3, &cfg.Octopus))
+	mux.Handle("/", http.FileServerFS(sub))
+
+	log.Printf("listening on %s", *addr)
+	if err := http.ListenAndServe(*addr, mux); err != nil {
+		log.Fatal(err)
+	}
+}
