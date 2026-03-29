@@ -9,8 +9,8 @@
 | Phase 2: Ongoing Data Collection | ❌ Not started | Manual runs only; no cron/daemon |
 | Phase 3: Octopus Data Integration | ✅ Complete | `harvest fetch-octopus`; Agile rates + SMETS2 consumption; dynamic product discovery |
 | Phase 4: Analysis App (core) | ✅ Complete | Go web server + dashboard UI; rates/consumption/analysis views; Go vs Agile comparison |
-| Phase 4: Battery mode detection | ❌ Not started | |
-| Phase 4: Charging priority optimisation | ❌ Not started | |
+| Phase 4: Battery mode detection | ✅ Complete | Infers export-priority→self-use switch date from daytime charging patterns; Battery Mode view |
+| Phase 4: Charging priority optimisation | ✅ Complete | Decision boundary model + seasonal breakdown; Charging view with depletion analysis |
 | Phase 4: Agile battery optimisation model | ❌ Not started | |
 | Phase 4: Tariff explorer | ❌ Not started | |
 
@@ -442,6 +442,6 @@ s3:
 - **Tariff selection** — rather than hardcoding Go rates in config, auto-discover the user's actual tariff from the Octopus account API (`/v1/accounts/{account}/`), and allow selecting tariffs for comparison
 
 ### UI
-- **Drag to zoom** — click-drag to zoom into a time range on charts, with a viewport/overview chart below showing the selected window in wider context (consider Chart.js zoom plugin or uPlot)
-- **Caching** — cache API responses in the browser or server-side so navigating back to a previously viewed window doesn't re-fetch from R2
-- **Static snapshot with embedded data** — generate a self-contained HTML file with data baked in for demo/sharing purposes, no server required
+- ~~**Drag to zoom** — click-drag to zoom into a time range on charts, with a viewport/overview chart below~~ ✅ Done — chartjs-plugin-zoom with drag selection; overview minimap below each chart shows zoomed window in context
+- ~~**Caching**~~ ✅ Done — server-side R2 response caching
+- ~~**Static snapshot with embedded data**~~ ✅ Done — `cmd/demo` generates a self-contained HTML with data baked in and a fetch shim; deployed to GitHub Pages
