@@ -127,7 +127,7 @@ func main() {
 		}
 	}
 
-	d.Analysis = analysis.Calculate(importRates, exportRates, importCons, exportCons, importAgreements, exportAgreements, &cfg.Octopus)
+	d.Analysis = analysis.Calculate(importRates, exportRates, importCons, exportCons, importAgreements, exportAgreements, &cfg.Octopus, 0)
 	log.Printf("fetched analysis (%d days)", len(d.Analysis.Days))
 
 	solaxDays, err := solax.ReadDays(ctx, s3)

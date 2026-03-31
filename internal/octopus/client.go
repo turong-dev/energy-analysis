@@ -247,6 +247,69 @@ func (c *Client) FetchAgreements(ctx context.Context, accountID string) (importA
 }
 
 // ---------------------------------------------------------------------------
+// Standing charges
+// ---------------------------------------------------------------------------
+
+// FetchStandingCharge returns the standing charge in p/day (inc. VAT) for the
+// given tariff code, using the most recently valid direct-debit entry.
+// tariffCode format: E-1R-AGILE-24-10-01-E → product AGILE-24-10-01
+func (c *Client) FetchStandingCharge(ctx context.Context, tariffCode string) (float64, error) {
+	productCode, err := productCodeFromTariff(tariffCode)
+	if err != nil {
+		return 0, err
+	}
+	url := fmt.Sprintf("%s/products/%s/electricity-tariffs/%s/standing-charges/?payment_method=DIRECT_DEBIT",
+		apiBase, productCode, tariffCode)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	if c.apiKey != "" {
+		req.SetBasicAuth(c.apiKey, "")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("standing-charges HTTP %d: %s", resp.StatusCode, body)
+	}
+	var result struct {
+		Results []struct {
+			ValueIncVAT float64    `json:"value_inc_vat"`
+			ValidFrom   time.Time  `json:"valid_from"`
+			ValidTo     *time.Time `json:"valid_to"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	if len(result.Results) == 0 {
+		return 0, fmt.Errorf("no standing charges returned for %s", tariffCode)
+	}
+	// Take the most recently started entry.
+	best := result.Results[0]
+	for _, r := range result.Results[1:] {
+		if r.ValidFrom.After(best.ValidFrom) {
+			best = r
+		}
+	}
+	return best.ValueIncVAT, nil
+}
+
+// productCodeFromTariff extracts the product code from a tariff code.
+// e.g. "E-1R-AGILE-24-10-01-E" → "AGILE-24-10-01"
+func productCodeFromTariff(tariffCode string) (string, error) {
+	parts := strings.Split(tariffCode, "-")
+	if len(parts) < 4 {
+		return "", fmt.Errorf("unexpected tariff code format: %s", tariffCode)
+	}
+	return strings.Join(parts[2:len(parts)-1], "-"), nil
+}
+
+// ---------------------------------------------------------------------------
 // SMETS2 consumption
 // ---------------------------------------------------------------------------
 

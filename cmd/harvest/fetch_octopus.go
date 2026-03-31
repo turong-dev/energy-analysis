@@ -47,13 +47,16 @@ func fetchOctopus(ctx context.Context, cfg *config.Config, s3 store.Store) error
 func fetchRates(ctx context.Context, client *octopus.Client, s3 store.Store, direction, region string) error {
 	log.Printf("fetching agile %s rates...", direction)
 	now := time.Now().UTC()
+	// Agile rates for the following day are published at 4pm UK time,
+	// so extend the fetch window to end of tomorrow when past that time.
+	end := agileRatesEnd(now)
 
-	for month := solaxStart; !month.After(now); month = month.AddDate(0, 1, 0) {
+	for month := solaxStart; !monthStart(month).After(end); month = month.AddDate(0, 1, 0) {
 		from := monthStart(month)
-		to := monthEnd(month, now)
+		to := monthEnd(month, end)
 		key := fmt.Sprintf("octopus/agile-%s/%d/%02d.json", direction, from.Year(), from.Month())
 
-		// Always re-fetch the current month as it may be incomplete
+		// Always re-fetch the latest month as it may be incomplete
 		if !isCurrentMonth(from, now) {
 			exists, err := s3.Exists(ctx, key)
 			if err != nil {
@@ -102,7 +105,7 @@ func fetchConsumption(ctx context.Context, client *octopus.Client, s3 store.Stor
 	log.Printf("fetching %s consumption (MPAN %s)...", direction, mpan)
 	now := time.Now().UTC()
 
-	for month := solaxStart; !month.After(now); month = month.AddDate(0, 1, 0) {
+	for month := solaxStart; !monthStart(month).After(now); month = month.AddDate(0, 1, 0) {
 		from := monthStart(month)
 		to := monthEnd(month, now)
 		key := fmt.Sprintf("octopus/consumption/%s/%d/%02d.json", direction, from.Year(), from.Month())
@@ -120,7 +123,7 @@ func fetchConsumption(ctx context.Context, client *octopus.Client, s3 store.Stor
 
 		readings, err := client.FetchConsumption(ctx, mpan, serial, from, to)
 		if err != nil {
-			return fmt.Errorf("%s/%02d: %w", from.Year(), from.Month(), err)
+			return fmt.Errorf("%d/%02d: %w", from.Year(), from.Month(), err)
 		}
 
 		file := octopus.MonthFile[octopus.HalfHourlyConsumption]{
@@ -154,4 +157,21 @@ func monthEnd(t, now time.Time) time.Time {
 
 func isCurrentMonth(t, now time.Time) bool {
 	return t.Year() == now.Year() && t.Month() == now.Month()
+}
+
+// agileRatesEnd returns the upper bound for fetching Agile rates.
+// Next-day rates are published at 4pm UK time, so after that point we
+// extend the window to include the full following day.
+func agileRatesEnd(now time.Time) time.Time {
+	london, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		return now
+	}
+	londonNow := now.In(london)
+	if londonNow.Hour() >= 16 {
+		// Midnight UTC two days from now — keeps the loop boundary in UTC so
+		// April 1st 00:00 UTC isn't accidentally excluded when BST is in effect.
+		return time.Date(now.Year(), now.Month(), now.Day()+2, 0, 0, 0, 0, time.UTC)
+	}
+	return now
 }

@@ -58,17 +58,12 @@
       cursor: pointer; font-family: inherit; transition: all 0.15s;
     }
     .nav-btn:hover { border-color: #3b82f6; color: #f8fafc; }
-    .nav-label {
-      font-size: 12px; color: #d1d5db; min-width: 190px; text-align: center;
+    .date-input {
+      background: #111118; color: #9ca3af; border: 1px solid #1e1e2e; border-radius: 4px;
+      padding: 6px 12px; font-size: 11px; font-family: inherit; cursor: pointer;
+      color-scheme: dark;
     }
-    .dir-tabs { display: flex; gap: 2px; }
-    .dir-tab {
-      padding: 6px 12px; font-size: 11px; letter-spacing: 1px;
-      text-transform: uppercase; background: transparent;
-      color: #6b7280; border: 1px solid transparent;
-      border-radius: 4px; cursor: pointer; font-family: inherit;
-    }
-    .dir-tab.active { background: #111118; color: #3b82f6; border-color: #3b82f640; }
+    .date-input:hover { border-color: #3b82f6; color: #f8fafc; }
     .window-tabs { display: flex; gap: 2px; }
     .window-tab {
       padding: 6px 10px; font-size: 11px; letter-spacing: 1px;
@@ -186,10 +181,12 @@
   </div>
 
   <div class="controls">
-    <div class="nav">
-      <button class="nav-btn" id="prev">&#8249; prev</button>
-      <span class="nav-label" id="range-label"></span>
-      <button class="nav-btn" id="next">next &#8250;</button>
+    <div class="nav" id="nav-arrows">
+      <button class="nav-btn" id="prev">&#8249;</button>
+      <input type="date" id="range-from" class="date-input">
+      <span style="color:#6b7280">–</span>
+      <input type="date" id="range-to" class="date-input">
+      <button class="nav-btn" id="next">&#8250;</button>
     </div>
     <div class="window-tabs">
       <button class="window-tab active" data-days="7">7D</button>
@@ -197,10 +194,8 @@
       <button class="window-tab" data-days="90">90D</button>
       <button class="window-tab" data-days="180">6M</button>
       <button class="window-tab" data-days="365">1Y</button>
-    </div>
-    <div class="dir-tabs">
-      <button class="dir-tab active" data-dir="import">Import</button>
-      <button class="dir-tab" data-dir="export">Export</button>
+      <button class="window-tab" data-mode="mtd">MTD</button>
+      <button class="window-tab" data-mode="ytd">YTD</button>
     </div>
     <button id="reset-zoom" class="nav-btn" style="display:none;color:#a78bfa;border-color:#a78bfa40" onclick="resetAllZoom()">reset zoom</button>
   </div>
@@ -227,13 +222,12 @@
 
     <div class="card">
       <div class="card-header">
-        <div class="card-label">p / kWh · half-hourly</div>
+        <div class="card-label">Import · p / kWh · half-hourly</div>
         <button class="info-btn" onclick="toggleInfo(this)">info</button>
       </div>
       <div class="card-info">
         Half-hourly Agile tariff rates from Octopus Energy in p/kWh. Bars are colour-coded by price band —
         dark green = negative (you're paid to consume), bright green = under 10p (very cheap), through to red = over 40p (expensive).
-        Switch between Import and Export to compare buy and sell rates.
         The cheapest overnight slots are where pre-charging the battery pays off most.
       </div>
       <div class="rate-legend">
@@ -246,6 +240,11 @@
       </div>
       <div class="chart-wrap"><canvas id="rates-chart"></canvas></div>
       <div class="chart-overview-wrap"><canvas id="rates-chart-overview"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Export · p / kWh · half-hourly</div>
+      <div class="chart-wrap"><canvas id="rates-chart-export"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="rates-chart-export-overview"></canvas></div>
     </div>
   </div>
 
@@ -263,6 +262,12 @@
         <div class="scenario-tabs">
           <button class="scenario-tab active" data-stype="export" data-sval="fixed">Fixed</button>
           <button class="scenario-tab" data-stype="export" data-sval="agile">Agile</button>
+        </div>
+      </div>
+      <div class="scenario-group">
+        <span class="scenario-group-label">Standing charge</span>
+        <div class="scenario-tabs">
+          <button class="scenario-tab" id="standing-charge-toggle">Include</button>
         </div>
       </div>
     </div>
@@ -393,7 +398,7 @@
 
     <div class="card">
       <div class="card-header">
-        <div class="card-label">kWh · half-hourly</div>
+        <div class="card-label">Import · kWh · half-hourly</div>
         <button class="info-btn" onclick="toggleInfo(this)">info</button>
       </div>
       <div class="card-info">
@@ -405,6 +410,11 @@
       <div class="chart-wrap"><canvas id="consumption-chart"></canvas></div>
       <div class="chart-overview-wrap"><canvas id="consumption-chart-overview"></canvas></div>
     </div>
+    <div class="card">
+      <div class="card-label">Export · kWh · half-hourly</div>
+      <div class="chart-wrap"><canvas id="consumption-chart-export"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="consumption-chart-export-overview"></canvas></div>
+    </div>
   </div>
 
   <script>
@@ -414,7 +424,6 @@
     }
 
     // ── state ────────────────────────────────────────────────────────────────
-    let direction = 'import';
     let currentView = 'rates';
     let windowDays = 7;
     let rangeStart = (() => {
@@ -423,10 +432,12 @@
       d.setUTCDate(d.getUTCDate() - (windowDays - 1));
       return d;
     })();
+    let rangeEndDate = (() => { const d = new Date(); d.setUTCHours(0,0,0,0); return d; })();
 
-    let ratesChart, consumptionChart, batteryChart, chargingChart;
+    let ratesChart, ratesChartExport, consumptionChart, consumptionChartExport, batteryChart, chargingChart;
     let cmpImport = 'go';    // 'go' | 'agile'
     let cmpExport = 'fixed'; // 'fixed' | 'agile'
+    let includeStandingCharge = false;
     let lastAnalysisData = null;
     let batteryLoaded = false;
     let chargingLoaded = false;
@@ -554,9 +565,11 @@
     // ── helpers ──────────────────────────────────────────────────────────────
     const fmtDate = d => d.toISOString().slice(0, 10);
 
-    function rangeEnd() {
-      const d = new Date(rangeStart);
-      d.setUTCDate(d.getUTCDate() + (windowDays - 1));
+    function rangeEnd() { return rangeEndDate; }
+
+    function today() {
+      const d = new Date();
+      d.setUTCHours(0, 0, 0, 0);
       return d;
     }
 
@@ -592,7 +605,7 @@
     };
 
     function resetAllZoom() {
-      [ratesChart, consumptionChart, analysisChart, savingChart, batteryChart, chargingChart]
+      [ratesChart, ratesChartExport, consumptionChart, consumptionChartExport, analysisChart, savingChart, batteryChart, chargingChart]
         .forEach(c => {
           if (!c) return;
           c.resetZoom();
@@ -675,20 +688,8 @@
     }
 
     // ── charts ───────────────────────────────────────────────────────────────
-    function renderRates(points) {
-      if (ratesChart) ratesChart.destroy();
-      const vals = points.map(p => p.v);
-      const avg = vals.length ? (vals.reduce((a,b) => a+b, 0) / vals.length) : 0;
-      const mn  = vals.length ? Math.min(...vals) : 0;
-      const mx  = vals.length ? Math.max(...vals) : 0;
-      const cheap = vals.filter(v => v < 10).length;
-
-      document.getElementById('stat-avg').innerHTML   = avg.toFixed(1)  + '<span class="stat-unit">p</span>';
-      document.getElementById('stat-min').innerHTML   = mn.toFixed(1)   + '<span class="stat-unit">p</span>';
-      document.getElementById('stat-max').innerHTML   = mx.toFixed(1)   + '<span class="stat-unit">p</span>';
-      document.getElementById('stat-cheap').textContent = cheap;
-
-      ratesChart = new Chart(document.getElementById('rates-chart'), {
+    function makeRatesChart(canvasId, points) {
+      return new Chart(document.getElementById(canvasId), {
         type: 'bar',
         data: {
           datasets: [{
@@ -719,21 +720,31 @@
           },
         },
       });
-      createOverview(ratesChart);
     }
 
-    function renderConsumption(points) {
-      if (consumptionChart) consumptionChart.destroy();
-      const vals = points.map(p => p.v);
-      const total = vals.reduce((a,b) => a+b, 0);
-      const days  = (rangeEnd() - rangeStart) / 86400000 + 1;
-      const peak  = vals.length ? Math.max(...vals) : 0;
+    function renderRates(importPoints, exportPoints) {
+      if (ratesChart)       ratesChart.destroy();
+      if (ratesChartExport) ratesChartExport.destroy();
 
-      document.getElementById('stat-total').innerHTML = total.toFixed(2) + '<span class="stat-unit">kWh</span>';
-      document.getElementById('stat-daily').innerHTML = (total / days).toFixed(2) + '<span class="stat-unit">kWh</span>';
-      document.getElementById('stat-peak').innerHTML  = peak.toFixed(3)  + '<span class="stat-unit">kWh</span>';
+      const vals = importPoints.map(p => p.v);
+      const avg = vals.length ? (vals.reduce((a,b) => a+b, 0) / vals.length) : 0;
+      const mn  = vals.length ? Math.min(...vals) : 0;
+      const mx  = vals.length ? Math.max(...vals) : 0;
+      const cheap = vals.filter(v => v < 10).length;
 
-      consumptionChart = new Chart(document.getElementById('consumption-chart'), {
+      document.getElementById('stat-avg').innerHTML   = avg.toFixed(1)  + '<span class="stat-unit">p</span>';
+      document.getElementById('stat-min').innerHTML   = mn.toFixed(1)   + '<span class="stat-unit">p</span>';
+      document.getElementById('stat-max').innerHTML   = mx.toFixed(1)   + '<span class="stat-unit">p</span>';
+      document.getElementById('stat-cheap').textContent = cheap;
+
+      ratesChart       = makeRatesChart('rates-chart',        importPoints);
+      ratesChartExport = makeRatesChart('rates-chart-export', exportPoints);
+      createOverview(ratesChart);
+      createOverview(ratesChartExport);
+    }
+
+    function makeConsumptionChart(canvasId, points) {
+      return new Chart(document.getElementById(canvasId), {
         type: 'bar',
         data: {
           datasets: [{
@@ -765,7 +776,25 @@
           },
         },
       });
+    }
+
+    function renderConsumption(importPoints, exportPoints) {
+      if (consumptionChart)       consumptionChart.destroy();
+      if (consumptionChartExport) consumptionChartExport.destroy();
+
+      const vals  = importPoints.map(p => p.v);
+      const total = vals.reduce((a,b) => a+b, 0);
+      const days  = (rangeEnd() - rangeStart) / 86400000 + 1;
+      const peak  = vals.length ? Math.max(...vals) : 0;
+
+      document.getElementById('stat-total').innerHTML = total.toFixed(2) + '<span class="stat-unit">kWh</span>';
+      document.getElementById('stat-daily').innerHTML = (total / days).toFixed(2) + '<span class="stat-unit">kWh</span>';
+      document.getElementById('stat-peak').innerHTML  = peak.toFixed(3)  + '<span class="stat-unit">kWh</span>';
+
+      consumptionChart       = makeConsumptionChart('consumption-chart',        importPoints);
+      consumptionChartExport = makeConsumptionChart('consumption-chart-export', exportPoints);
       createOverview(consumptionChart);
+      createOverview(consumptionChartExport);
     }
 
     // ── loading indicator ────────────────────────────────────────────────────
@@ -780,22 +809,28 @@
     async function loadData() {
       const from = fmtDate(rangeStart);
       const to   = fmtDate(rangeEnd());
-      document.getElementById('range-label').textContent = from + ' – ' + to;
-      document.getElementById('header-sub').textContent  = direction + ' · ' + from + ' – ' + to;
+      document.getElementById('range-from').value = from;
+      document.getElementById('range-to').value   = to;
+      document.getElementById('header-sub').textContent = from + ' – ' + to;
 
-      const qs = `direction=${direction}&from=${from}&to=${to}`;
+      const qsImport = `direction=import&from=${from}&to=${to}`;
+      const qsExport = `direction=export&from=${from}&to=${to}`;
       setLoading(true);
       try {
-        const [ratesRes, consumptionRes] = await Promise.all([
-          fetch(`/api/rates?${qs}`),
-          fetch(`/api/consumption?${qs}`),
+        const [ratesImpRes, ratesExpRes, consImpRes, consExpRes] = await Promise.all([
+          fetch(`/api/rates?${qsImport}`),
+          fetch(`/api/rates?${qsExport}`),
+          fetch(`/api/consumption?${qsImport}`),
+          fetch(`/api/consumption?${qsExport}`),
         ]);
-        const [rates, consumption] = await Promise.all([
-          ratesRes.ok ? ratesRes.json() : [],
-          consumptionRes.ok ? consumptionRes.json() : [],
+        const [ratesImp, ratesExp, consImp, consExp] = await Promise.all([
+          ratesImpRes.ok ? ratesImpRes.json() : [],
+          ratesExpRes.ok ? ratesExpRes.json() : [],
+          consImpRes.ok  ? consImpRes.json()  : [],
+          consExpRes.ok  ? consExpRes.json()  : [],
         ]);
-        renderRates(rates || []);
-        renderConsumption(consumption || []);
+        renderRates(ratesImp || [], ratesExp || []);
+        renderConsumption(consImp || [], consExp || []);
         if (currentView === 'analysis') loadAnalysis();
       } finally {
         setLoading(false);
@@ -813,10 +848,8 @@
       document.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.view === view));
       const dateControls = view !== 'battery' && view !== 'charging';
-      document.querySelector('.nav').style.visibility          = dateControls ? '' : 'hidden';
+      document.getElementById('nav-arrows').style.visibility  = dateControls ? '' : 'hidden';
       document.querySelector('.window-tabs').style.visibility  = dateControls ? '' : 'hidden';
-      document.querySelector('.dir-tabs').style.visibility     =
-        (view === 'analysis' || view === 'battery' || view === 'charging') ? 'hidden' : '';
     }
 
     // ── analysis ─────────────────────────────────────────────────────────────
@@ -844,8 +877,12 @@
       const activePeriod = firstDate && periods.reduce((best, p) =>
         p.from <= firstDate && (!best || p.from > best.from) ? p : best, null);
       const initialTariff = activePeriod ? activePeriod.tariff : null;
-      const actualNets = days.map(d => d.actual_net);
-      const cmpNets    = days.map(d => cmpNet(d));
+      const actualSC = d => includeStandingCharge ? d.actual_standing_charge : 0;
+      const cmpSC    = d => includeStandingCharge
+        ? (cmpImport === 'agile' ? d.agile_standing_charge : d.go_standing_charge)
+        : 0;
+      const actualNets = days.map(d => d.actual_net + actualSC(d));
+      const cmpNets    = days.map(d => cmpNet(d)    + cmpSC(d));
 
       const totalActual = actualNets.reduce((a,b) => a+b, 0);
       const totalCmp    = cmpNets.reduce((a,b) => a+b, 0);
@@ -1139,24 +1176,61 @@
     }
 
     // ── event wiring ─────────────────────────────────────────────────────────
-    document.getElementById('prev').addEventListener('click', () => {
-      rangeStart.setUTCDate(rangeStart.getUTCDate() - windowDays); loadData();
+    function spanDays() {
+      return Math.round((rangeEndDate - rangeStart) / 86400000) + 1;
+    }
+
+    function shiftRange(days) {
+      rangeStart   = new Date(rangeStart);
+      rangeEndDate = new Date(rangeEndDate);
+      rangeStart.setUTCDate(rangeStart.getUTCDate()     + days);
+      rangeEndDate.setUTCDate(rangeEndDate.getUTCDate() + days);
+      loadData();
+    }
+
+    document.getElementById('prev').addEventListener('click', () => shiftRange(-spanDays()));
+    document.getElementById('next').addEventListener('click', () => shiftRange(spanDays()));
+
+    document.getElementById('range-from').addEventListener('change', function() {
+      const d = new Date(this.value + 'T00:00:00Z');
+      if (!isNaN(d)) { rangeStart = d; if (rangeStart <= rangeEndDate) loadData(); }
     });
-    document.getElementById('next').addEventListener('click', () => {
-      rangeStart.setUTCDate(rangeStart.getUTCDate() + windowDays); loadData();
+    document.getElementById('range-to').addEventListener('change', function() {
+      const d = new Date(this.value + 'T00:00:00Z');
+      if (!isNaN(d)) { rangeEndDate = d; if (rangeStart <= rangeEndDate) loadData(); }
     });
-    document.querySelectorAll('.window-tab').forEach(btn =>
+
+    function setActiveWindowTab(btn) {
+      document.querySelectorAll('.window-tab').forEach(b => b.classList.toggle('active', b === btn));
+    }
+
+    document.querySelectorAll('.window-tab[data-days]').forEach(btn =>
       btn.addEventListener('click', () => {
         windowDays = parseInt(btn.dataset.days, 10);
-        // anchor the end of the window to today
-        const today = new Date();
-        today.setUTCHours(0, 0, 0, 0);
-        rangeStart = new Date(today);
-        rangeStart.setUTCDate(today.getUTCDate() - (windowDays - 1));
-        document.querySelectorAll('.window-tab').forEach(b =>
-          b.classList.toggle('active', b === btn));
+        const t = today();
+        rangeEndDate = new Date(t);
+        rangeStart   = new Date(t);
+        rangeStart.setUTCDate(t.getUTCDate() - (windowDays - 1));
+        setActiveWindowTab(btn);
         loadData();
       }));
+
+    document.querySelector('.window-tab[data-mode="mtd"]').addEventListener('click', function() {
+      const t = today();
+      rangeStart   = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 1));
+      rangeEndDate = new Date(t);
+      setActiveWindowTab(this);
+      loadData();
+    });
+
+    document.querySelector('.window-tab[data-mode="ytd"]').addEventListener('click', function() {
+      const t = today();
+      rangeStart   = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+      rangeEndDate = new Date(t);
+      setActiveWindowTab(this);
+      loadData();
+    });
+
     document.querySelectorAll('.tab').forEach(btn =>
       btn.addEventListener('click', () => {
         switchView(btn.dataset.view);
@@ -1164,14 +1238,6 @@
         if (btn.dataset.view === 'battery')  loadBattery();
         if (btn.dataset.view === 'charging') loadCharging();
       }));
-    document.querySelectorAll('.dir-tab').forEach(btn =>
-      btn.addEventListener('click', () => {
-        direction = btn.dataset.dir;
-        document.querySelectorAll('.dir-tab').forEach(b =>
-          b.classList.toggle('active', b === btn));
-        loadData();
-      }));
-
     document.querySelectorAll('.scenario-tab[data-stype]').forEach(btn =>
       btn.addEventListener('click', () => {
         const stype = btn.dataset.stype;
@@ -1181,6 +1247,11 @@
           b.classList.toggle('active', b === btn));
         if (lastAnalysisData) renderAnalysis(lastAnalysisData);
       }));
+    document.getElementById('standing-charge-toggle').addEventListener('click', function() {
+      includeStandingCharge = !includeStandingCharge;
+      this.classList.toggle('active', includeStandingCharge);
+      if (lastAnalysisData) renderAnalysis(lastAnalysisData);
+    });
 
     loadData();
   </script>

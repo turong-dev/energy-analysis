@@ -30,18 +30,21 @@ func init() {
 //   - Go: hypothetical cost had the Go tariff been active for the entire day.
 //   - Agile: hypothetical cost had Agile been active for the entire day.
 type DayCost struct {
-	Date         string  `json:"date"`          // YYYY-MM-DD
-	ActualImport float64 `json:"actual_import"` // pence
-	ActualExport float64 `json:"actual_export"` // pence
-	ActualNet    float64 `json:"actual_net"`    // ActualImport - ActualExport
-	GoImport     float64 `json:"go_import"`     // pence
-	GoExport     float64 `json:"go_export"`     // pence (fixed export rate)
-	GoNet        float64 `json:"go_net"`        // GoImport - GoExport
-	AgileImport  float64 `json:"agile_import"`  // pence
-	AgileExport  float64 `json:"agile_export"`  // pence
-	AgileNet     float64 `json:"agile_net"`     // AgileImport - AgileExport
-	ImportKWh    float64 `json:"import_kwh"`
-	ExportKWh    float64 `json:"export_kwh"`
+	Date           string  `json:"date"`            // YYYY-MM-DD
+	ActualImport   float64 `json:"actual_import"`   // pence
+	ActualExport   float64 `json:"actual_export"`   // pence
+	ActualNet      float64 `json:"actual_net"`      // ActualImport - ActualExport
+	GoImport       float64 `json:"go_import"`       // pence
+	GoExport       float64 `json:"go_export"`       // pence (fixed export rate)
+	GoNet          float64 `json:"go_net"`          // GoImport - GoExport
+	AgileImport    float64 `json:"agile_import"`    // pence
+	AgileExport    float64 `json:"agile_export"`    // pence
+	AgileNet       float64 `json:"agile_net"`       // AgileImport - AgileExport
+	GoStandingCharge     float64 `json:"go_standing_charge"`     // pence/day (Go tariff)
+	AgileStandingCharge  float64 `json:"agile_standing_charge"`  // pence/day (Agile tariff)
+	ActualStandingCharge float64 `json:"actual_standing_charge"` // pence/day (tariff active that day)
+	ImportKWh      float64 `json:"import_kwh"`
+	ExportKWh      float64 `json:"export_kwh"`
 }
 
 // TariffPeriod describes a period during which a specific tariff type was active.
@@ -92,6 +95,7 @@ func Calculate(
 	importConsumption, exportConsumption []octopus.HalfHourlyConsumption,
 	importAgreements, exportAgreements []octopus.TariffAgreement,
 	cfg *config.OctopusConfig,
+	agileStandingCharge float64,
 ) AnalysisResult {
 	importRateMap := buildRateMap(importRates)
 	exportRateMap := buildRateMap(exportRates)
@@ -132,6 +136,13 @@ func Calculate(
 		d.ActualNet = d.ActualImport - d.ActualExport
 		d.GoNet = d.GoImport - d.GoExport
 		d.AgileNet = d.AgileImport - d.AgileExport
+		d.GoStandingCharge = standingChargeForDay(d.Date, cfg)
+		d.AgileStandingCharge = agileStandingCharge
+		if isAgileDay(d.Date, importAgreements) {
+			d.ActualStandingCharge = agileStandingCharge
+		} else {
+			d.ActualStandingCharge = d.GoStandingCharge
+		}
 		days = append(days, *d)
 	}
 	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
@@ -193,6 +204,27 @@ func goRateForSlot(t time.Time, cfg *config.OctopusConfig) float64 {
 		return rate.OffpeakRate
 	}
 	return rate.PeakRate
+}
+
+func isAgileDay(date string, agreements []octopus.TariffAgreement) bool {
+	t, err := time.ParseInLocation("2006-01-02", date, london)
+	if err != nil {
+		return false
+	}
+	a := octopus.AgreementAt(agreements, t)
+	return a != nil && a.IsAgile()
+}
+
+func standingChargeForDay(date string, cfg *config.OctopusConfig) float64 {
+	t, err := time.ParseInLocation("2006-01-02", date, london)
+	if err != nil {
+		return 0
+	}
+	rate := cfg.GoRateAt(t)
+	if rate == nil {
+		return 0
+	}
+	return rate.StandingCharge
 }
 
 func parseHHMM(s string) int {

@@ -24,15 +24,15 @@ type SolaxConfig struct {
 }
 
 type OctopusConfig struct {
-	APIKey            string       `yaml:"api_key"`
-	AccountID         string       `yaml:"account_id"`
-	MPANImport        string       `yaml:"mpan_import"`
-	MPANExport        string       `yaml:"mpan_export"`
-	MeterSerialImport string       `yaml:"meter_serial_import"`
-	MeterSerialExport string       `yaml:"meter_serial_export"`
-	Region            string       `yaml:"region"`
-	GoRates           []GoRate     `yaml:"go_rates"`
-	ExportRates       []ExportRate `yaml:"export_rates"`
+	APIKey               string       `yaml:"api_key"`
+	AccountID            string       `yaml:"account_id"`
+	MPANImport           string       `yaml:"mpan_import"`
+	MPANExport           string       `yaml:"mpan_export"`
+	MeterSerialImport    string       `yaml:"meter_serial_import"`
+	MeterSerialExport    string       `yaml:"meter_serial_export"`
+	Region               string       `yaml:"region"`
+	GoRates     []GoRate     `yaml:"go_rates"`
+	ExportRates []ExportRate `yaml:"export_rates"`
 }
 
 type GoRate struct {
