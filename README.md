@@ -19,7 +19,7 @@ The dashboard provides:
 
 - **Solar & battery detail** — 5-minute resolution charts for any day: generation, consumption, import/export, battery SoC
 - **Go vs Agile cost comparison** — per-slot and monthly breakdown of actual costs (Go) vs hypothetical costs (Agile), using real SMETS2 consumption data
-- **Battery mode detection** — infers when the inverter switched from export-priority to self-use mode, based on daytime charging patterns
+- **Battery mode detection** — [WIP] infers when the inverter switched from export-priority to self-use mode, based on daytime charging patterns
 - **Charging priority optimisation** — models whether grid-charging during off-peak windows or relying on solar was the better call each day, with a decision boundary based on solar yield
 
 ## Architecture

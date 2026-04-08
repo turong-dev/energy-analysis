@@ -9,3 +9,5 @@ config.yaml
 bin/
 
 .cache/
+
+.DS_Store
