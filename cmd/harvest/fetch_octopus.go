@@ -160,8 +160,10 @@ func isCurrentMonth(t, now time.Time) bool {
 }
 
 // agileRatesEnd returns the upper bound for fetching Agile rates.
-// Next-day rates are published at 4pm UK time, so after that point we
-// extend the window to include the full following day.
+// Rates for the current day are available from midnight; next-day rates
+// are published at 4pm UK time, so after that point we extend the window
+// to include the full following day. Day boundaries are computed in London
+// time so that BST (UTC+1) is handled correctly.
 func agileRatesEnd(now time.Time) time.Time {
 	london, err := time.LoadLocation("Europe/London")
 	if err != nil {
@@ -169,9 +171,7 @@ func agileRatesEnd(now time.Time) time.Time {
 	}
 	londonNow := now.In(london)
 	if londonNow.Hour() >= 16 {
-		// Midnight UTC two days from now — keeps the loop boundary in UTC so
-		// April 1st 00:00 UTC isn't accidentally excluded when BST is in effect.
-		return time.Date(now.Year(), now.Month(), now.Day()+2, 0, 0, 0, 0, time.UTC)
+		return time.Date(londonNow.Year(), londonNow.Month(), londonNow.Day()+2, 0, 0, 0, 0, london).UTC()
 	}
-	return now
+	return time.Date(londonNow.Year(), londonNow.Month(), londonNow.Day()+1, 0, 0, 0, 0, london).UTC()
 }

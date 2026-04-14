@@ -213,6 +213,7 @@
       <button class="nav-btn" id="next">&#8250;</button>
     </div>
     <div class="window-tabs">
+      <button class="window-tab" data-days="1">1D</button>
       <button class="window-tab active" data-days="7">7D</button>
       <button class="window-tab" data-days="30">30D</button>
       <button class="window-tab" data-days="90">90D</button>
@@ -1201,7 +1202,7 @@
 
     // ── event wiring ─────────────────────────────────────────────────────────
     function spanDays() {
-      return Math.round((rangeEndDate - rangeStart) / 86400000) + 1;
+      return windowDays === 1 ? 1 : Math.round((rangeEndDate - rangeStart) / 86400000) + 1;
     }
 
     function shiftRange(days) {
@@ -1233,6 +1234,7 @@
         windowDays = parseInt(btn.dataset.days, 10);
         const t = today();
         rangeEndDate = new Date(t);
+        if (windowDays === 1) rangeEndDate.setUTCDate(rangeEndDate.getUTCDate() + 1);
         rangeStart   = new Date(t);
         rangeStart.setUTCDate(t.getUTCDate() - (windowDays - 1));
         setActiveWindowTab(btn);

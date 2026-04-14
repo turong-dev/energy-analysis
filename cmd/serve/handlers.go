@@ -229,8 +229,8 @@ func analysisHandler(s3 store.Store, cfg *config.OctopusConfig, oc *octopus.Clie
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		importRates       = filterRates(importRates, from, to)
-		exportRates       = filterRates(exportRates, from, to)
+		importRates = filterRates(importRates, from, to)
+		exportRates = filterRates(exportRates, from, to)
 		importConsumption = filterConsumption(importConsumption, from, to)
 		exportConsumption = filterConsumption(exportConsumption, from, to)
 
