@@ -3,11 +3,13 @@ package analysis
 import (
 	"math"
 	"testing"
+	"time"
 
-	"energy-utility/internal/solax"
+	"energy-utility/internal/device"
 )
 
 func TestDaytimeChargeKWhFromModeSwitch(t *testing.T) {
+	fiveMin := 5 * time.Minute
 	power := make([]float64, 288)
 	for i := range power {
 		power[i] = math.NaN()
@@ -16,10 +18,11 @@ func TestDaytimeChargeKWhFromModeSwitch(t *testing.T) {
 		power[i] = 2.0
 	}
 
-	d := solax.DayRecord{
-		Date:         "2024-06-15",
+	d := device.DayData{
+		Date:         time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC),
+		Resolution:   fiveMin,
 		TotalYield:   10.0,
-		BatteryPower: power,
+		BatteryPower: device.TimeSeries{Resolution: fiveMin, Values: power},
 	}
 
 	kwh := daytimeChargeKWh(d)
@@ -30,6 +33,7 @@ func TestDaytimeChargeKWhFromModeSwitch(t *testing.T) {
 }
 
 func TestDaytimeChargeKWhIgnoresPre7am(t *testing.T) {
+	fiveMin := 5 * time.Minute
 	power := make([]float64, 288)
 	for i := range power {
 		power[i] = math.NaN()
@@ -38,10 +42,11 @@ func TestDaytimeChargeKWhIgnoresPre7am(t *testing.T) {
 		power[i] = 3.0
 	}
 
-	d := solax.DayRecord{
-		Date:         "2024-06-15",
+	d := device.DayData{
+		Date:         time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC),
+		Resolution:   fiveMin,
 		TotalYield:   10.0,
-		BatteryPower: power,
+		BatteryPower: device.TimeSeries{Resolution: fiveMin, Values: power},
 	}
 
 	kwh := daytimeChargeKWh(d)
@@ -51,6 +56,7 @@ func TestDaytimeChargeKWhIgnoresPre7am(t *testing.T) {
 }
 
 func TestDaytimeChargeKWhIgnoresNegativeDischarge(t *testing.T) {
+	fiveMin := 5 * time.Minute
 	power := make([]float64, 288)
 	for i := range power {
 		power[i] = math.NaN()
@@ -59,10 +65,11 @@ func TestDaytimeChargeKWhIgnoresNegativeDischarge(t *testing.T) {
 		power[i] = -1.5
 	}
 
-	d := solax.DayRecord{
-		Date:         "2024-06-15",
+	d := device.DayData{
+		Date:         time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC),
+		Resolution:   fiveMin,
 		TotalYield:   10.0,
-		BatteryPower: power,
+		BatteryPower: device.TimeSeries{Resolution: fiveMin, Values: power},
 	}
 
 	kwh := daytimeChargeKWh(d)
@@ -100,11 +107,12 @@ func TestFindSwitchDateNoClearTransition(t *testing.T) {
 func TestDetectModeSwitchLowYieldFiltered(t *testing.T) {
 	power := make([]float64, 288)
 
-	days := []solax.DayRecord{
+	days := []device.DayData{
 		{
-			Date:         "2024-06-01",
+			Date:         time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+			Resolution:   5 * time.Minute,
 			TotalYield:   0.5,
-			BatteryPower: power,
+			BatteryPower: device.TimeSeries{Resolution: 5 * time.Minute, Values: power},
 		},
 	}
 
@@ -139,15 +147,16 @@ func TestFindSwitchDateWithClearTransition(t *testing.T) {
 }
 
 func TestDetectModeSwitchSorted(t *testing.T) {
+	fiveMin := 5 * time.Minute
 	power := make([]float64, 288)
 	for i := 84; i < 200; i++ {
 		power[i] = 2.0
 	}
 
-	days := []solax.DayRecord{
-		{Date: "2024-08-15", TotalYield: 10.0, BatteryPower: power},
-		{Date: "2024-06-01", TotalYield: 8.0, BatteryPower: power},
-		{Date: "2024-07-01", TotalYield: 9.0, BatteryPower: power},
+	days := []device.DayData{
+		{Date: time.Date(2024, 8, 15, 0, 0, 0, 0, time.UTC), Resolution: fiveMin, TotalYield: 10.0, BatteryPower: device.TimeSeries{Resolution: fiveMin, Values: power}},
+		{Date: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC), Resolution: fiveMin, TotalYield: 8.0, BatteryPower: device.TimeSeries{Resolution: fiveMin, Values: power}},
+		{Date: time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC), Resolution: fiveMin, TotalYield: 9.0, BatteryPower: device.TimeSeries{Resolution: fiveMin, Values: power}},
 	}
 
 	result := DetectModeSwitch(days)

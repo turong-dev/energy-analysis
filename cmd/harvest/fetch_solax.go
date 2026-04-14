@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"energy-utility/internal/config"
-	"energy-utility/internal/solax"
+	"energy-utility/internal/device/solax"
 	"energy-utility/internal/store"
 )
 

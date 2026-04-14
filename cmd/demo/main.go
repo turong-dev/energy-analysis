@@ -14,9 +14,11 @@ import (
 
 	"energy-utility/internal/analysis"
 	"energy-utility/internal/config"
-	"energy-utility/internal/octopus"
-	"energy-utility/internal/solax"
+	"energy-utility/internal/device"
+	"energy-utility/internal/device/solax"
 	"energy-utility/internal/store"
+	"energy-utility/internal/tariff"
+	"energy-utility/internal/tariff/octopus"
 )
 
 type dataPoint struct {
@@ -25,12 +27,12 @@ type dataPoint struct {
 }
 
 type demoData struct {
-	RatesImport       []dataPoint              `json:"rates-import"`
-	RatesExport       []dataPoint              `json:"rates-export"`
-	ConsumptionImport []dataPoint              `json:"consumption-import"`
-	ConsumptionExport []dataPoint              `json:"consumption-export"`
-	Analysis          analysis.AnalysisResult  `json:"analysis"`
-	ModeSwitch        analysis.ModeSwitchResult `json:"battery-mode-switch"`
+	RatesImport       []dataPoint                `json:"rates-import"`
+	RatesExport       []dataPoint                `json:"rates-export"`
+	ConsumptionImport []dataPoint                `json:"consumption-import"`
+	ConsumptionExport []dataPoint                `json:"consumption-export"`
+	Analysis          analysis.AnalysisResult    `json:"analysis"`
+	ModeSwitch        analysis.ModeSwitchResult  `json:"battery-mode-switch"`
 	Charging          analysis.ChargingOptResult `json:"battery-charging"`
 }
 
@@ -127,15 +129,16 @@ func main() {
 		}
 	}
 
-	d.Analysis = analysis.Calculate(importRates, exportRates, importCons, exportCons, importAgreements, exportAgreements, &cfg.Octopus, 0)
+	d.Analysis = analysis.Calculate(toTariffRates(importRates), toTariffRates(exportRates), importCons, exportCons, importAgreements, exportAgreements, &cfg.Octopus, 0)
 	log.Printf("fetched analysis (%d days)", len(d.Analysis.Days))
 
 	solaxDays, err := solax.ReadDays(ctx, s3)
 	if err != nil {
 		log.Fatalf("read solax days: %v", err)
 	}
-	d.ModeSwitch = analysis.DetectModeSwitch(solaxDays)
-	d.Charging = analysis.AnalyseCharging(solaxDays)
+	deviceDays := toDeviceDays(solaxDays)
+	d.ModeSwitch = analysis.DetectModeSwitch(deviceDays)
+	d.Charging = analysis.AnalyseCharging(deviceDays)
 	log.Printf("fetched battery data (%d solax days)", len(solaxDays))
 
 	dataJSON, err := json.Marshal(d)
@@ -178,6 +181,40 @@ func parseDateRange(fromStr, toStr string) (from, to time.Time) {
 	}
 	to = to.Add(24 * time.Hour)
 	return
+}
+
+func toTariffRates(rates []octopus.HalfHourlyRate) []tariff.Rate {
+	result := make([]tariff.Rate, len(rates))
+	for i, r := range rates {
+		result[i] = tariff.Rate{
+			ValueIncVAT: r.ValueIncVAT,
+			ValidFrom:   r.ValidFrom,
+			ValidTo:     r.ValidTo,
+		}
+	}
+	return result
+}
+
+func toDeviceDays(days []solax.DayRecord) []device.DayData {
+	result := make([]device.DayData, len(days))
+	for i, d := range days {
+		date, _ := time.Parse("2006-01-02", d.Date)
+		result[i] = device.DayData{
+			Date:             date,
+			Resolution:       5 * time.Minute,
+			TotalYield:       d.TotalYield,
+			FeedIn:           d.FeedIn,
+			GridImport:       d.GridImport,
+			BatteryCharge:    d.BatteryCharge,
+			BatteryDischarge: d.BatteryDischarge,
+			Load:             d.TotalLoad,
+			PVPower:          device.TimeSeries{Resolution: 5 * time.Minute, Values: d.PVPower},
+			LoadPower:        device.TimeSeries{Resolution: 5 * time.Minute, Values: d.LoadPower},
+			BatteryPower:     device.TimeSeries{Resolution: 5 * time.Minute, Values: d.BatteryPower},
+			BatterySoC:       device.TimeSeries{Resolution: 5 * time.Minute, Values: d.BatterySoC},
+		}
+	}
+	return result
 }
 
 // fetchShim intercepts window.fetch and serves pre-baked data from

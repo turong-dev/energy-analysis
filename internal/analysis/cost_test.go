@@ -7,7 +7,8 @@ import (
 	_ "time/tzdata"
 
 	"energy-utility/internal/config"
-	"energy-utility/internal/octopus"
+	"energy-utility/internal/tariff"
+	"energy-utility/internal/tariff/octopus"
 )
 
 func londonTime(date, hhmm string) time.Time {
@@ -249,7 +250,7 @@ func TestCalculate(t *testing.T) {
 		{IntervalStart: utcTime("2024-06-15T12:00:00Z"), IntervalEnd: utcTime("2024-06-15T12:30:00Z"), Consumption: 0.3},
 	}
 
-	result := Calculate(importRates, exportRates, importConsumption, exportConsumption, nil, nil, cfg, 27.0)
+	result := Calculate(toTariffRates(importRates), toTariffRates(exportRates), importConsumption, exportConsumption, nil, nil, cfg, 27.0)
 
 	if len(result.Days) != 1 {
 		t.Fatalf("expected 1 day, got %d", len(result.Days))
@@ -314,7 +315,7 @@ func TestCalculateWithAgileAgreement(t *testing.T) {
 		{IntervalStart: slot, Consumption: 0.5},
 	}
 
-	result := Calculate(importRates, exportRates, importConsumption, exportConsumption, importAgreements, nil, cfg, 27.0)
+	result := Calculate(toTariffRates(importRates), toTariffRates(exportRates), importConsumption, exportConsumption, importAgreements, nil, cfg, 27.0)
 
 	d := result.Days[0]
 	if d.ActualImport != 20.0 {
@@ -392,4 +393,16 @@ func mustParseTime(s string) time.Time {
 		panic(err)
 	}
 	return t
+}
+
+func toTariffRates(rates []octopus.HalfHourlyRate) []tariff.Rate {
+	result := make([]tariff.Rate, len(rates))
+	for i, r := range rates {
+		result[i] = tariff.Rate{
+			ValueIncVAT: r.ValueIncVAT,
+			ValidFrom:   r.ValidFrom,
+			ValidTo:     r.ValidTo,
+		}
+	}
+	return result
 }

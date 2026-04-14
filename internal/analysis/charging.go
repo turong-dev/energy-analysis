@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"energy-utility/internal/solax"
+	"energy-utility/internal/device"
 )
 
 const depletionThresholdPct = 15.0 // % SoC — below this the battery is considered depleted
@@ -16,7 +16,7 @@ type DayCharging struct {
 	TotalYieldKWh  float64 `json:"total_yield_kwh"`
 	MinSoC         float64 `json:"min_soc"`          // lowest SoC from 07:00 onwards (%)
 	SolarChargeKWh float64 `json:"solar_charge_kwh"` // kWh charged from solar (after 07:00)
-	Depleted       bool    `json:"depleted"`          // min SoC hit depletion threshold
+	Depleted       bool    `json:"depleted"`         // min SoC hit depletion threshold
 	Season         string  `json:"season"`
 }
 
@@ -36,23 +36,20 @@ type ChargingOptResult struct {
 
 // AnalyseCharging identifies which days the battery was depleted and derives
 // the solar yield threshold below which self-use (solar top-up) mode is needed.
-func AnalyseCharging(days []solax.DayRecord) ChargingOptResult {
+func AnalyseCharging(days []device.DayData) ChargingOptResult {
 	var result []DayCharging
 
 	for _, d := range days {
-		if len(d.BatterySoC) < 100 {
+		if len(d.BatterySoC.Values) < 100 {
 			continue
 		}
-		date, err := time.Parse("2006-01-02", d.Date)
-		if err != nil {
-			continue
-		}
+		date := d.Date
 		minSoC := computeMinSoC(d.BatterySoC)
 		if math.IsNaN(minSoC) {
 			continue
 		}
 		result = append(result, DayCharging{
-			Date:           d.Date,
+			Date:           date.Format("2006-01-02"),
 			TotalYieldKWh:  d.TotalYield,
 			MinSoC:         minSoC,
 			SolarChargeKWh: daytimeChargeKWh(d),
@@ -72,13 +69,18 @@ func AnalyseCharging(days []solax.DayRecord) ChargingOptResult {
 
 // computeMinSoC returns the minimum SoC from 07:00 onwards, ignoring the
 // pre-dawn period when the battery is still being charged from the grid.
-func computeMinSoC(soc []float64) float64 {
-	startSlot := 7 * 60 / 5 // 07:00 = slot 84
-	if len(soc) <= startSlot {
+func computeMinSoC(soc device.TimeSeries) float64 {
+	resolutionMinutes := int(soc.Resolution.Minutes())
+	if resolutionMinutes == 0 {
+		resolutionMinutes = 5
+	}
+	startSlot := (7 * 60) / resolutionMinutes
+	socValues := soc.Values
+	if len(socValues) <= startSlot {
 		return math.NaN()
 	}
 	min := math.NaN()
-	for _, v := range soc[startSlot:] {
+	for _, v := range socValues[startSlot:] {
 		if math.IsNaN(v) {
 			continue
 		}

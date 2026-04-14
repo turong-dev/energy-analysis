@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"energy-utility/internal/config"
-	"energy-utility/internal/octopus"
 	"energy-utility/internal/store"
+	"energy-utility/internal/tariff/octopus"
 )
 
 // startDate is the earliest date we have SolaX data for.

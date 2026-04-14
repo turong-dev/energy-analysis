@@ -8,7 +8,8 @@ import (
 	_ "time/tzdata"
 
 	"energy-utility/internal/config"
-	"energy-utility/internal/octopus"
+	"energy-utility/internal/tariff"
+	"energy-utility/internal/tariff/octopus"
 )
 
 var london *time.Location
@@ -30,28 +31,28 @@ func init() {
 //   - Go: hypothetical cost had the Go tariff been active for the entire day.
 //   - Agile: hypothetical cost had Agile been active for the entire day.
 type DayCost struct {
-	Date           string  `json:"date"`            // YYYY-MM-DD
-	ActualImport   float64 `json:"actual_import"`   // pence
-	ActualExport   float64 `json:"actual_export"`   // pence
-	ActualNet      float64 `json:"actual_net"`      // ActualImport - ActualExport
-	GoImport       float64 `json:"go_import"`       // pence
-	GoExport       float64 `json:"go_export"`       // pence (fixed export rate)
-	GoNet          float64 `json:"go_net"`          // GoImport - GoExport
-	AgileImport    float64 `json:"agile_import"`    // pence
-	AgileExport    float64 `json:"agile_export"`    // pence
-	AgileNet       float64 `json:"agile_net"`       // AgileImport - AgileExport
+	Date                 string  `json:"date"`                   // YYYY-MM-DD
+	ActualImport         float64 `json:"actual_import"`          // pence
+	ActualExport         float64 `json:"actual_export"`          // pence
+	ActualNet            float64 `json:"actual_net"`             // ActualImport - ActualExport
+	GoImport             float64 `json:"go_import"`              // pence
+	GoExport             float64 `json:"go_export"`              // pence (fixed export rate)
+	GoNet                float64 `json:"go_net"`                 // GoImport - GoExport
+	AgileImport          float64 `json:"agile_import"`           // pence
+	AgileExport          float64 `json:"agile_export"`           // pence
+	AgileNet             float64 `json:"agile_net"`              // AgileImport - AgileExport
 	GoStandingCharge     float64 `json:"go_standing_charge"`     // pence/day (Go tariff)
 	AgileStandingCharge  float64 `json:"agile_standing_charge"`  // pence/day (Agile tariff)
 	ActualStandingCharge float64 `json:"actual_standing_charge"` // pence/day (tariff active that day)
-	ImportKWh      float64 `json:"import_kwh"`
-	ExportKWh      float64 `json:"export_kwh"`
+	ImportKWh            float64 `json:"import_kwh"`
+	ExportKWh            float64 `json:"export_kwh"`
 }
 
 // TariffPeriod describes a period during which a specific tariff type was active.
 type TariffPeriod struct {
-	From   string  `json:"from"`            // YYYY-MM-DD
-	To     *string `json:"to,omitempty"`    // YYYY-MM-DD, nil = ongoing
-	Tariff string  `json:"tariff"`          // "Go" | "Agile" | "Unknown"
+	From   string  `json:"from"`         // YYYY-MM-DD
+	To     *string `json:"to,omitempty"` // YYYY-MM-DD, nil = ongoing
+	Tariff string  `json:"tariff"`       // "Go" | "Agile" | "Unknown"
 }
 
 // AnalysisResult bundles the per-day cost breakdown with tariff switch metadata.
@@ -91,14 +92,14 @@ func AgreementsToPeriods(agreements []octopus.TariffAgreement) []TariffPeriod {
 //
 // Slots with no matching Agile rate contribute zero Agile cost (not an error).
 func Calculate(
-	importRates, exportRates []octopus.HalfHourlyRate,
+	importRates, exportRates []tariff.Rate,
 	importConsumption, exportConsumption []octopus.HalfHourlyConsumption,
 	importAgreements, exportAgreements []octopus.TariffAgreement,
 	cfg *config.OctopusConfig,
 	agileStandingCharge float64,
 ) AnalysisResult {
-	importRateMap := buildRateMap(importRates)
-	exportRateMap := buildRateMap(exportRates)
+	importRateMap := buildTariffRateMap(importRates)
+	exportRateMap := buildTariffRateMap(exportRates)
 
 	daysMap := map[string]*DayCost{}
 
@@ -173,6 +174,14 @@ func actualExportRate(t time.Time, agreements []octopus.TariffAgreement, agileRa
 }
 
 func buildRateMap(rates []octopus.HalfHourlyRate) map[time.Time]float64 {
+	m := make(map[time.Time]float64, len(rates))
+	for _, r := range rates {
+		m[r.ValidFrom.UTC().Truncate(time.Minute)] = r.ValueIncVAT
+	}
+	return m
+}
+
+func buildTariffRateMap(rates []tariff.Rate) map[time.Time]float64 {
 	m := make(map[time.Time]float64, len(rates))
 	for _, r := range rates {
 		m[r.ValidFrom.UTC().Truncate(time.Minute)] = r.ValueIncVAT

@@ -11,9 +11,11 @@ import (
 
 	"energy-utility/internal/analysis"
 	"energy-utility/internal/config"
-	"energy-utility/internal/octopus"
-	"energy-utility/internal/solax"
+	"energy-utility/internal/device"
+	"energy-utility/internal/device/solax"
 	"energy-utility/internal/store"
+	"energy-utility/internal/tariff"
+	"energy-utility/internal/tariff/octopus"
 )
 
 type dataPoint struct {
@@ -99,7 +101,7 @@ func chargingOptHandler(s3 store.Store) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		result := analysis.AnalyseCharging(days)
+		result := analysis.AnalyseCharging(toDeviceDays(days))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}
@@ -113,7 +115,7 @@ func modeSwitchHandler(s3 store.Store) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		result := analysis.DetectModeSwitch(days)
+		result := analysis.DetectModeSwitch(toDeviceDays(days))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}
@@ -158,6 +160,40 @@ func parseDateRange(r *http.Request) (from, to time.Time, err error) {
 	}
 	to = to.Add(24 * time.Hour) // make to inclusive
 	return from, to, nil
+}
+
+func toTariffRates(rates []octopus.HalfHourlyRate) []tariff.Rate {
+	result := make([]tariff.Rate, len(rates))
+	for i, r := range rates {
+		result[i] = tariff.Rate{
+			ValueIncVAT: r.ValueIncVAT,
+			ValidFrom:   r.ValidFrom,
+			ValidTo:     r.ValidTo,
+		}
+	}
+	return result
+}
+
+func toDeviceDays(days []solax.DayRecord) []device.DayData {
+	result := make([]device.DayData, len(days))
+	for i, d := range days {
+		date, _ := time.Parse("2006-01-02", d.Date)
+		result[i] = device.DayData{
+			Date:             date,
+			Resolution:       5 * time.Minute,
+			TotalYield:       d.TotalYield,
+			FeedIn:           d.FeedIn,
+			GridImport:       d.GridImport,
+			BatteryCharge:    d.BatteryCharge,
+			BatteryDischarge: d.BatteryDischarge,
+			Load:             d.TotalLoad,
+			PVPower:          device.TimeSeries{Resolution: 5 * time.Minute, Values: d.PVPower},
+			LoadPower:        device.TimeSeries{Resolution: 5 * time.Minute, Values: d.LoadPower},
+			BatteryPower:     device.TimeSeries{Resolution: 5 * time.Minute, Values: d.BatteryPower},
+			BatterySoC:       device.TimeSeries{Resolution: 5 * time.Minute, Values: d.BatterySoC},
+		}
+	}
+	return result
 }
 
 func analysisHandler(s3 store.Store, cfg *config.OctopusConfig, oc *octopus.Client) http.HandlerFunc {
@@ -234,7 +270,7 @@ func analysisHandler(s3 store.Store, cfg *config.OctopusConfig, oc *octopus.Clie
 		importConsumption = filterConsumption(importConsumption, from, to)
 		exportConsumption = filterConsumption(exportConsumption, from, to)
 
-		result := analysis.Calculate(importRates, exportRates, importConsumption, exportConsumption, importAgreements, exportAgreements, cfg, agileStandingCharge)
+		result := analysis.Calculate(toTariffRates(importRates), toTariffRates(exportRates), importConsumption, exportConsumption, importAgreements, exportAgreements, cfg, agileStandingCharge)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)

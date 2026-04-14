@@ -4,7 +4,7 @@ import (
 	"math"
 	"sort"
 
-	"energy-utility/internal/solax"
+	"energy-utility/internal/device"
 )
 
 // DaySignal holds the mode-switch signal for a single day.
@@ -30,14 +30,14 @@ const (
 // DetectModeSwitch infers when the inverter switched from export-priority to
 // self-use/charge-priority by detecting when daytime battery charging (after
 // 07:00) first appeared consistently in the data.
-func DetectModeSwitch(days []solax.DayRecord) ModeSwitchResult {
+func DetectModeSwitch(days []device.DayData) ModeSwitchResult {
 	var signals []DaySignal
 	for _, d := range days {
 		if d.TotalYield < minYieldKWh {
 			continue
 		}
 		signals = append(signals, DaySignal{
-			Date:             d.Date,
+			Date:             d.Date.Format("2006-01-02"),
 			DaytimeChargeKWh: daytimeChargeKWh(d),
 			TotalYieldKWh:    d.TotalYield,
 		})
@@ -51,15 +51,18 @@ func DetectModeSwitch(days []solax.DayRecord) ModeSwitchResult {
 }
 
 // daytimeChargeKWh returns the kWh of battery charging that occurred after 07:00.
-// Slot index i corresponds to the 5-minute interval starting at i*5 minutes past midnight.
-func daytimeChargeKWh(d solax.DayRecord) float64 {
+func daytimeChargeKWh(d device.DayData) float64 {
 	total := 0.0
-	for i, p := range d.BatteryPower {
+	resolutionMinutes := int(d.BatteryPower.Resolution.Minutes())
+	if resolutionMinutes == 0 {
+		resolutionMinutes = 5
+	}
+	for i, p := range d.BatteryPower.Values {
 		if math.IsNaN(p) || p <= 0 {
 			continue
 		}
-		if i*5 >= 7*60 { // slot starts at or after 07:00
-			total += p * (5.0 / 60.0) // kW × hours
+		if i*resolutionMinutes >= 7*60 { // slot starts at or after 07:00
+			total += p * (float64(resolutionMinutes) / 60.0) // kW × hours
 		}
 	}
 	return total

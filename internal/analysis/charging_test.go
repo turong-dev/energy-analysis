@@ -5,42 +5,43 @@ import (
 	"testing"
 	"time"
 
-	"energy-utility/internal/solax"
+	"energy-utility/internal/device"
 )
 
 func TestComputeMinSoC(t *testing.T) {
+	fiveMin := 5 * time.Minute
 	tests := []struct {
 		name string
-		soc  []float64
+		soc  device.TimeSeries
 		want float64
 	}{
 		{
 			name: "normal day",
-			soc: func() []float64 {
+			soc: func() device.TimeSeries {
 				s := make([]float64, 288)
 				for i := range s {
 					s[i] = 100 - float64(i)*0.2
 				}
-				return s
+				return device.TimeSeries{Resolution: fiveMin, Values: s}
 			}(),
 			want: 42.6,
 		},
 		{
 			name: "NaN values ignored",
-			soc: func() []float64 {
+			soc: func() device.TimeSeries {
 				s := make([]float64, 288)
 				for i := range s {
 					s[i] = math.NaN()
 				}
 				s[90] = 50.0
 				s[91] = 60.0
-				return s
+				return device.TimeSeries{Resolution: fiveMin, Values: s}
 			}(),
 			want: 50.0,
 		},
 		{
 			name: "too short returns NaN",
-			soc:  make([]float64, 50),
+			soc:  device.TimeSeries{Resolution: fiveMin, Values: make([]float64, 50)},
 			want: math.NaN(),
 		},
 	}
@@ -86,8 +87,8 @@ func TestSeasonFor(t *testing.T) {
 }
 
 func TestAnalyseChargingFiltersLowBatteryCount(t *testing.T) {
-	days := []solax.DayRecord{
-		{Date: "2024-06-01", BatterySoC: make([]float64, 10)},
+	days := []device.DayData{
+		{Date: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC), BatterySoC: device.TimeSeries{Resolution: 5 * time.Minute, Values: make([]float64, 10)}},
 	}
 	result := AnalyseCharging(days)
 	if len(result.Days) != 0 {
@@ -96,6 +97,7 @@ func TestAnalyseChargingFiltersLowBatteryCount(t *testing.T) {
 }
 
 func TestAnalyseChargingNormal(t *testing.T) {
+	fiveMin := 5 * time.Minute
 	soc := make([]float64, 288)
 	for i := range soc {
 		soc[i] = math.NaN()
@@ -112,12 +114,13 @@ func TestAnalyseChargingNormal(t *testing.T) {
 		power[i] = 2.0 // 2 kW charging
 	}
 
-	days := []solax.DayRecord{
+	days := []device.DayData{
 		{
-			Date:         "2024-06-15",
+			Date:         time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC),
+			Resolution:   fiveMin,
 			TotalYield:   15.0,
-			BatterySoC:   soc,
-			BatteryPower: power,
+			BatterySoC:   device.TimeSeries{Resolution: fiveMin, Values: soc},
+			BatteryPower: device.TimeSeries{Resolution: fiveMin, Values: power},
 		},
 	}
 
@@ -141,6 +144,7 @@ func TestAnalyseChargingNormal(t *testing.T) {
 }
 
 func TestDaytimeChargeKWh(t *testing.T) {
+	fiveMin := 5 * time.Minute
 	power := make([]float64, 288)
 	for i := range power {
 		power[i] = math.NaN()
@@ -149,11 +153,12 @@ func TestDaytimeChargeKWh(t *testing.T) {
 		power[i] = 2.0
 	}
 
-	d := solax.DayRecord{
-		Date:         "2024-06-15",
+	d := device.DayData{
+		Date:         time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC),
+		Resolution:   fiveMin,
 		TotalYield:   10.0,
-		BatterySoC:   make([]float64, 288),
-		BatteryPower: power,
+		BatterySoC:   device.TimeSeries{Resolution: fiveMin, Values: make([]float64, 288)},
+		BatteryPower: device.TimeSeries{Resolution: fiveMin, Values: power},
 	}
 
 	kwh := daytimeChargeKWh(d)

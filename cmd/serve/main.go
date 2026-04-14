@@ -9,8 +9,8 @@ import (
 	"net/http"
 
 	"energy-utility/internal/config"
-	"energy-utility/internal/octopus"
 	"energy-utility/internal/store"
+	"energy-utility/internal/tariff/octopus"
 )
 
 //go:embed ui
