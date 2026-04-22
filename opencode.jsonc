@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "energy-utility": {
+      "type": "local",
+      "command": ["go", "run", "./cmd/mcp"],
+      "enabled": true,
+      "environment": {
+        "AWS_PROFILE": "solax-data"
+      }
+    }
+  }
+}
