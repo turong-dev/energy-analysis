@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"energy-utility/internal/config"
+	"energy-utility/internal/registry"
 	"energy-utility/internal/store"
 	"energy-utility/internal/tariff/octopus"
 )
@@ -33,6 +35,11 @@ func fetchOctopus(ctx context.Context, cfg *config.Config, s3 store.Store) error
 	}
 	if err := fetchRates(ctx, client, s3, "export", region); err != nil {
 		return fmt.Errorf("fetch export rates: %w", err)
+	}
+
+	// Update tariff registry with discovered tariffs
+	if err := updateTariffRegistry(ctx, s3, client, region); err != nil {
+		log.Printf("warn: failed to update tariff registry: %v", err)
 	}
 	if err := fetchConsumption(ctx, client, s3, "import", cfg.Octopus.MPANImport, cfg.Octopus.MeterSerialImport); err != nil {
 		return fmt.Errorf("fetch import consumption: %w", err)
@@ -107,7 +114,12 @@ func fetchConsumption(ctx context.Context, client *octopus.Client, s3 store.Stor
 
 	for month := solaxStart; !monthStart(month).After(now); month = month.AddDate(0, 1, 0) {
 		from := monthStart(month)
-		to := monthEnd(month, now)
+		var to time.Time
+		if isCurrentMonth(from, now) {
+			to = now // Only fetch up to now for current month
+		} else {
+			to = calendarMonthEnd(from) // Full month for historical months
+		}
 		key := fmt.Sprintf("octopus/consumption/%s/%d/%02d.json", direction, from.Year(), from.Month())
 
 		if !isCurrentMonth(from, now) {
@@ -115,7 +127,7 @@ func fetchConsumption(ctx context.Context, client *octopus.Client, s3 store.Stor
 			if err != nil {
 				log.Printf("warn: checking %s: %v", key, err)
 			}
-			if exists {
+			if exists && !isIncomplete(ctx, s3, key, from, now) {
 				log.Printf("%s: already in S3, skipping", key)
 				continue
 			}
@@ -126,15 +138,25 @@ func fetchConsumption(ctx context.Context, client *octopus.Client, s3 store.Stor
 			return fmt.Errorf("%d/%02d: %w", from.Year(), from.Month(), err)
 		}
 
+		// Filter to only keep entries in the target month (Octopus may return
+		// the boundary interval ending on the first of the next month)
+		monthPrefix := fmt.Sprintf("%d-%02d-", from.Year(), from.Month())
+		filtered := make([]octopus.HalfHourlyConsumption, 0, len(readings))
+		for _, r := range readings {
+			if strings.HasPrefix(r.IntervalStart.Format("2006-01-02"), monthPrefix) {
+				filtered = append(filtered, r)
+			}
+		}
+
 		file := octopus.MonthFile[octopus.HalfHourlyConsumption]{
 			Month:   fmt.Sprintf("%d-%02d", from.Year(), from.Month()),
 			Updated: now.Format(time.RFC3339),
-			Data:    readings,
+			Data:    filtered,
 		}
 		if err := s3.PutJSON(ctx, key, file); err != nil {
 			return fmt.Errorf("upload %s: %w", key, err)
 		}
-		log.Printf("%s: stored %d readings", key, len(readings))
+		log.Printf("%s: stored %d readings", key, len(filtered))
 	}
 	return nil
 }
@@ -155,8 +177,99 @@ func monthEnd(t, now time.Time) time.Time {
 	return end
 }
 
+func calendarMonthEnd(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+}
+
 func isCurrentMonth(t, now time.Time) bool {
 	return t.Year() == now.Year() && t.Month() == now.Month()
+}
+
+type consumptionCheck struct {
+	Data []struct {
+		IntervalStart string `json:"interval_start"`
+	} `json:"data"`
+}
+
+func isIncomplete(ctx context.Context, s3 store.Store, key string, month, now time.Time) bool {
+	data := &consumptionCheck{}
+	if err := s3.GetJSON(ctx, key, data); err != nil {
+		log.Printf("warn: could not load %s to check completeness: %v", key, err)
+		return false
+	}
+	if len(data.Data) == 0 {
+		return true
+	}
+
+	lastEntry, err := time.Parse(time.RFC3339, data.Data[len(data.Data)-1].IntervalStart)
+	if err != nil {
+		log.Printf("warn: could not parse last entry %s: %v", data.Data[len(data.Data)-1].IntervalStart, err)
+		return false
+	}
+
+	expectedEnd := calendarMonthEnd(month)
+	if lastEntry.Before(expectedEnd) {
+		log.Printf("%s: appears incomplete (last entry %s, expected by %s), will re-fetch",
+			key, lastEntry.Format(time.DateTime), expectedEnd.Format(time.DateTime))
+		return true
+	}
+	return false
+}
+
+// updateTariffRegistry updates the tariff registry with current tariff information.
+func updateTariffRegistry(ctx context.Context, s3 store.Store, client *octopus.Client, region string) error {
+	reg, err := registry.LoadTariffRegistry(ctx, s3)
+	if err != nil {
+		return fmt.Errorf("load registry: %w", err)
+	}
+
+	now := time.Now().UTC()
+
+	// Update import tariff
+	importProduct, err := client.FindAgileProductAt(ctx, "import", now, log.Printf)
+	if err == nil && importProduct != "" {
+		reg.AddOrUpdateTariff(registry.TariffEntry{
+			ID:        "agile-import",
+			Name:      "Octopus Agile Import",
+			Code:      importProduct,
+			Type:      "dynamic",
+			Direction: "import",
+			Provider:  "octopus",
+			DataSource: registry.DataSource{
+				Type:   "s3",
+				Path:   "octopus/agile-import/",
+				Format: "monthly-rates",
+			},
+			ActiveFrom: solaxStart,
+		})
+	}
+
+	// Update export tariff
+	exportProduct, err := client.FindAgileProductAt(ctx, "export", now, log.Printf)
+	if err == nil && exportProduct != "" {
+		reg.AddOrUpdateTariff(registry.TariffEntry{
+			ID:        "agile-export",
+			Name:      "Octopus Agile Export",
+			Code:      exportProduct,
+			Type:      "dynamic",
+			Direction: "export",
+			Provider:  "octopus",
+			DataSource: registry.DataSource{
+				Type:   "s3",
+				Path:   "octopus/agile-export/",
+				Format: "monthly-rates",
+			},
+			ActiveFrom: solaxStart,
+		})
+	}
+
+	if err := registry.SaveTariffRegistry(ctx, s3, reg); err != nil {
+		return fmt.Errorf("save registry: %w", err)
+	}
+
+	log.Printf("tariff registry updated: %d import, %d export tariffs",
+		len(reg.Import), len(reg.Export))
+	return nil
 }
 
 // agileRatesEnd returns the upper bound for fetching Agile rates.

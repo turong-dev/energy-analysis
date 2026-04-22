@@ -182,7 +182,18 @@ func (c *Client) Login() error {
 		return fmt.Errorf("login request: %w", err)
 	}
 
-	result, err := c.decrypt(resp["data"].(string))
+	dataVal, ok := resp["data"]
+	if !ok || dataVal == nil {
+		if msg, hasMsg := resp["msg"]; hasMsg {
+			return fmt.Errorf("login API error: %v", msg)
+		}
+		return fmt.Errorf("login response missing data field")
+	}
+	dataStr, ok := dataVal.(string)
+	if !ok {
+		return fmt.Errorf("login response data field is not a string: %T", dataVal)
+	}
+	result, err := c.decrypt(dataStr)
 	if err != nil {
 		return fmt.Errorf("decrypt login response: %w", err)
 	}
@@ -213,6 +224,20 @@ func (c *Client) GetEnergyInfo(siteID string, day time.Time) (*Raw, error) {
 		return nil, err
 	}
 
+	// Try "green" version first (newer API), fall back to "blue" if needed
+	raw, err := c.getEnergyInfoWithVersion(siteID, day, "green")
+	if err != nil {
+		// Check if it's a version error (408 = version mismatch)
+		if strings.Contains(err.Error(), "版本号错误") || strings.Contains(err.Error(), "version") {
+			// Fall back to legacy "blue" version
+			raw, err = c.getEnergyInfoWithVersion(siteID, day, "blue")
+		}
+	}
+	return raw, err
+}
+
+// getEnergyInfoWithVersion fetches energy data with a specific API version.
+func (c *Client) getEnergyInfoWithVersion(siteID string, day time.Time, version string) (*Raw, error) {
 	ts := tsMs()
 	qs, err := c.encryptQS(map[string]any{"timeStamp": ts, "requestId": randHex(8)})
 	if err != nil {
@@ -245,7 +270,7 @@ func (c *Client) GetEnergyInfo(siteID string, day time.Time) (*Raw, error) {
 			"queryTime":          time.Now().Format("2006-01-02 15:04:05"),
 			"source":             "0",
 			"token":              c.token,
-			"version":            "blue",
+			"version":            version,
 			"websiteType":        "0",
 			"x-transaction-id":   fmt.Sprintf("%s-%d", randHex(8), ts),
 		},
@@ -254,7 +279,29 @@ func (c *Client) GetEnergyInfo(siteID string, day time.Time) (*Raw, error) {
 		return nil, fmt.Errorf("energy info request: %w", err)
 	}
 
-	result, err := c.decrypt(resp["data"].(string))
+	// Check for API error response (code 408 = version error)
+	if code, hasCode := resp["code"]; hasCode {
+		if codeFloat, ok := code.(float64); ok && codeFloat == 408 {
+			if msg, hasMsg := resp["msg"]; hasMsg {
+				return nil, fmt.Errorf("API version error: %v", msg)
+			}
+			return nil, fmt.Errorf("API version error (code 408)")
+		}
+	}
+
+	dataVal, ok := resp["data"]
+	if !ok || dataVal == nil {
+		// Check if there's an error message in the response
+		if msg, hasMsg := resp["msg"]; hasMsg {
+			return nil, fmt.Errorf("API error: %v", msg)
+		}
+		return nil, fmt.Errorf("API response missing data field")
+	}
+	dataStr, ok := dataVal.(string)
+	if !ok {
+		return nil, fmt.Errorf("API response data field is not a string: %T", dataVal)
+	}
+	result, err := c.decrypt(dataStr)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt response: %w", err)
 	}
