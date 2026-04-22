@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"energy-utility/internal/config"
+	"energy-utility/internal/mcp"
 	"energy-utility/internal/store"
 	"energy-utility/internal/tariff/octopus"
 )
@@ -41,6 +42,16 @@ func main() {
 		log.Fatalf("ui embed: %v", err)
 	}
 
+	// Create and configure MCP server if enabled
+	var mcpServer *mcp.Server
+	if cfg.MCP.Enabled {
+		mcpServer = mcp.NewServer()
+		if err := mcp.ConfigureServer(context.Background(), mcpServer, s3, cfg); err != nil {
+			log.Printf("MCP: failed to configure: %v", err)
+			mcpServer = nil
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/rates", ratesHandler(s3))
 	mux.HandleFunc("GET /api/consumption", consumptionHandler(s3))
@@ -48,6 +59,14 @@ func main() {
 	mux.HandleFunc("GET /api/analysis", analysisHandler(s3, &cfg.Octopus, oc))
 	mux.HandleFunc("GET /api/battery/mode-switch", modeSwitchHandler(s3))
 	mux.HandleFunc("GET /api/battery/charging-optimisation", chargingOptHandler(s3))
+
+	// MCP endpoints (only if enabled)
+	if cfg.MCP.Enabled && mcpServer != nil {
+		mux.HandleFunc("GET "+cfg.MCP.Path+"/sse", mcpServer.SSEHandler())
+		mux.HandleFunc("POST "+cfg.MCP.Path+"/message", mcpServer.MessageHandler())
+		log.Printf("MCP server enabled at %s", cfg.MCP.Path)
+	}
+
 	mux.Handle("/", http.FileServerFS(sub))
 
 	log.Printf("listening on %s", *addr)
@@ -55,3 +74,5 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
+

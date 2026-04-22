@@ -202,6 +202,7 @@
     <button class="tab" data-view="analysis">Analysis</button>
     <button class="tab" data-view="battery">Battery Mode</button>
     <button class="tab" data-view="charging">Charging</button>
+    <button class="tab" data-view="smart">Smart Charging</button>
   </div>
 
   <div class="controls">
@@ -405,6 +406,52 @@
     </div>
   </div>
 
+  <div id="view-smart" style="display:none">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Days with savings</div>
+        <div class="stat-value" id="sc-days-savings">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Total net savings</div>
+        <div class="stat-value" id="sc-savings" style="font-size:18px">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Avg savings/day</div>
+        <div class="stat-value" id="sc-avg-savings">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Total cycles used</div>
+        <div class="stat-value" id="sc-cycles">—</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-label">Baseline vs Optimized cost · £ · positive = money saved</div>
+        <button class="info-btn" onclick="toggleInfo(this)">info</button>
+      </div>
+      <div class="card-info">
+        Comparison of daily energy costs: baseline (no grid charging optimization) vs optimized (strategic charging during cheap slots).
+        Savings depend on battery capacity, charging rate limits, and the price differential between cheap and expensive periods.
+        Cycle cost accounts for battery degradation (~80p per full cycle).
+      </div>
+      <div class="chart-wrap" style="height:200px"><canvas id="smart-chart"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="smart-chart-overview"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-label">Cumulative savings · £</div>
+        <button class="info-btn" onclick="toggleInfo(this)">info</button>
+      </div>
+      <div class="card-info">
+        Running total of net savings from smart charging. Takes into account cycle costs for battery degradation.
+        A rising line indicates consistent savings; flat or falling sections indicate days where optimization wasn't beneficial.
+      </div>
+      <div class="chart-wrap" style="height:160px"><canvas id="smart-cumulative-chart"></canvas></div>
+      <div class="chart-overview-wrap"><canvas id="smart-cumulative-chart-overview"></canvas></div>
+    </div>
+  </div>
+
   <div id="view-consumption" style="display:none">
     <div class="stats">
       <div class="stat">
@@ -460,12 +507,15 @@
     let rangeEndDate = (() => { const d = new Date(); d.setUTCHours(0,0,0,0); return d; })();
 
     let ratesChart, ratesChartExport, consumptionChart, consumptionChartExport, batteryChart, chargingChart;
+    let smartChart, smartCumulativeChart;
     let cmpImport = 'go';    // 'go' | 'agile'
     let cmpExport = 'fixed'; // 'fixed' | 'agile'
     let includeStandingCharge = false;
     let lastAnalysisData = null;
     let batteryLoaded = false;
     let chargingLoaded = false;
+    let smartChargingLoaded = false;
+    let lastSmartChargingData = null;
 
     // Custom plugin: draws horizontal and/or vertical threshold lines on any chart.
     Chart.register({
@@ -870,6 +920,7 @@
       document.getElementById('view-analysis').style.display    = view === 'analysis'    ? '' : 'none';
       document.getElementById('view-battery').style.display     = view === 'battery'     ? '' : 'none';
       document.getElementById('view-charging').style.display    = view === 'charging'    ? '' : 'none';
+      document.getElementById('view-smart').style.display      = view === 'smart'       ? '' : 'none';
       document.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.view === view));
       const dateControls = view !== 'battery' && view !== 'charging';
@@ -1161,6 +1212,131 @@
         }).join('');
     }
 
+    function renderSmartCharging(result) {
+      if (smartChart) smartChart.destroy();
+      if (smartCumulativeChart) smartCumulativeChart.destroy();
+      
+      const summary = result && result.summary || {};
+      const days = (result && result.days) || [];
+
+      document.getElementById('sc-days-savings').textContent = 
+        `${summary.days_with_savings || 0} / ${summary.total_days || 0}`;
+      
+      const savings = (summary.total_net_savings_pence || 0) / 100;
+      const savingsEl = document.getElementById('sc-savings');
+      savingsEl.textContent = (savings >= 0 ? '+' : '') + '£' + savings.toFixed(2);
+      savingsEl.style.color = savings >= 0 ? '#2ecc40' : '#ff4136';
+      
+      const avgSavings = (summary.avg_savings_per_day_pence || 0) / 100;
+      document.getElementById('sc-avg-savings').innerHTML = 
+        '£' + avgSavings.toFixed(2) + '<span class="stat-unit">/day</span>';
+      
+      document.getElementById('sc-cycles').innerHTML = 
+        (summary.total_cycles_used || 0).toFixed(1) + '<span class="stat-unit">cycles</span>';
+
+      const labels = days.map(d => d.date);
+      
+      // Cost comparison chart
+      smartChart = new Chart(document.getElementById('smart-chart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Baseline',
+              data: days.map(d => d.baseline_cost_pence / 100),
+              backgroundColor: '#ff851b40',
+              borderColor: '#ff851b',
+              borderWidth: 1,
+            },
+            {
+              label: 'Optimized',
+              data: days.map(d => d.optimized_cost_pence / 100),
+              backgroundColor: '#22c55e40',
+              borderColor: '#22c55e',
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          ...chartDefaults,
+          plugins: {
+            legend: {
+              display: true,
+              labels: { color: '#9ca3af', font: { family: "'JetBrains Mono','SF Mono',monospace", size: 10 } },
+            },
+            zoom: zoomConfig,
+            tooltip: { callbacks: { label: ctx => ` £${ctx.parsed.y.toFixed(2)}` } },
+          },
+          scales: {
+            x: { ...darkAxis, ticks: { ...darkAxis.ticks, maxTicksLimit: 10 } },
+            y: { ...darkAxis, ticks: { ...darkAxis.ticks, callback: v => '£' + v.toFixed(2) } },
+          },
+        },
+      });
+
+      // Cumulative savings chart
+      let cum = 0;
+      const cumData = days.map(d => {
+        cum += (d.net_savings_pence || 0) / 100;
+        return cum;
+      });
+      const cumColor = cum >= 0 ? '#22c55e' : '#ef4444';
+
+      smartCumulativeChart = new Chart(document.getElementById('smart-cumulative-chart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: cumData,
+            borderColor: cumColor,
+            backgroundColor: cumColor + '20',
+            fill: true,
+            pointRadius: 0,
+            tension: 0.3,
+          }],
+        },
+        options: {
+          ...chartDefaults,
+          plugins: {
+            legend: { display: false },
+            zoom: zoomConfig,
+            tooltip: { callbacks: { label: ctx => ` £${ctx.parsed.y.toFixed(2)}` } },
+          },
+          scales: {
+            x: { ...darkAxis, ticks: { ...darkAxis.ticks, maxTicksLimit: 10 } },
+            y: { ...darkAxis, ticks: { ...darkAxis.ticks, callback: v => '£' + v.toFixed(2) } },
+          },
+        },
+      });
+
+      createOverview(smartChart);
+      createOverview(smartCumulativeChart);
+    }
+
+    async function loadSmartCharging() {
+      const from = fmtDate(rangeStart);
+      const to = fmtDate(rangeEnd());
+      const url = `/api/charging/optimization?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+      setLoading(true);
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          const text = await res.text();
+          console.error('Smart charging fetch failed:', res.status, text);
+          return;
+        }
+        const text = await res.text();
+        lastSmartChargingData = JSON.parse(text);
+        renderSmartCharging(lastSmartChargingData);
+        smartChargingLoaded = true;
+      } catch (err) {
+        console.error('Smart charging load error:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
     async function loadCharging() {
       if (chargingLoaded) return;
       setLoading(true);
@@ -1263,6 +1439,7 @@
         if (btn.dataset.view === 'analysis') loadAnalysis();
         if (btn.dataset.view === 'battery')  loadBattery();
         if (btn.dataset.view === 'charging') loadCharging();
+        if (btn.dataset.view === 'smart') loadSmartCharging();
       }));
     document.querySelectorAll('.scenario-tab[data-stype]').forEach(btn =>
       btn.addEventListener('click', () => {
