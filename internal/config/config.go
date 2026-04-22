@@ -5,14 +5,66 @@ import (
 	"os"
 	"time"
 
+	"energy-utility/internal/device"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
 	Solax    SolaxConfig   `yaml:"solax"`
 	Octopus  OctopusConfig `yaml:"octopus"`
+	Battery  BatteryConfig `yaml:"battery"`
 	S3       S3Config      `yaml:"s3"`
 	CacheDir string        `yaml:"cache_dir"`
+	MCP      MCPConfig     `yaml:"mcp"`
+}
+
+type MCPConfig struct {
+	Enabled      bool              `yaml:"enabled"`
+	Path         string            `yaml:"path"`
+	AutoDiscover bool              `yaml:"auto_discover"`
+	Devices      []MCPDeviceConfig `yaml:"devices,omitempty"`
+	Tariffs      MCPTariffsConfig  `yaml:"tariffs"`
+}
+
+type MCPDeviceConfig struct {
+	SiteID   string `yaml:"site_id"`
+	DeviceID string `yaml:"device_id"`
+	Type     string `yaml:"type"`
+}
+
+type MCPTariffsConfig struct {
+	Import []MCPTariffConfig `yaml:"import"`
+	Export []MCPTariffConfig `yaml:"export"`
+}
+
+type MCPTariffConfig struct {
+	ID         string `yaml:"id"`
+	Name       string `yaml:"name"`
+	StorageKey string `yaml:"storage_key"`
+	Code       string `yaml:"code,omitempty"`
+	Type       string `yaml:"type,omitempty"`
+}
+
+type BatteryConfig struct {
+	CapacityKWh         float64 `yaml:"capacity_kwh"`
+	MaxChargeKW         float64 `yaml:"max_charge_kw"`
+	MaxDischargeKW      float64 `yaml:"max_discharge_kw"`
+	MinSoCPercent       float64 `yaml:"min_soc_percent"`
+	MaxSoCPercent       float64 `yaml:"max_soc_percent"`
+	RoundTripEfficiency float64 `yaml:"round_trip_efficiency"`
+	CycleCostPence      float64 `yaml:"cycle_cost_pence"`
+}
+
+func (c *BatteryConfig) ToDeviceConfig() device.BatteryConfig {
+	return device.BatteryConfig{
+		CapacityKWh:         c.CapacityKWh,
+		MaxChargeKW:         c.MaxChargeKW,
+		MaxDischargeKW:      c.MaxDischargeKW,
+		MinSoCPercent:       c.MinSoCPercent,
+		MaxSoCPercent:       c.MaxSoCPercent,
+		RoundTripEfficiency: c.RoundTripEfficiency,
+		CycleCostPence:      c.CycleCostPence,
+	}
 }
 
 type SolaxConfig struct {
@@ -24,15 +76,15 @@ type SolaxConfig struct {
 }
 
 type OctopusConfig struct {
-	APIKey               string       `yaml:"api_key"`
-	AccountID            string       `yaml:"account_id"`
-	MPANImport           string       `yaml:"mpan_import"`
-	MPANExport           string       `yaml:"mpan_export"`
-	MeterSerialImport    string       `yaml:"meter_serial_import"`
-	MeterSerialExport    string       `yaml:"meter_serial_export"`
-	Region               string       `yaml:"region"`
-	GoRates     []GoRate     `yaml:"go_rates"`
-	ExportRates []ExportRate `yaml:"export_rates"`
+	APIKey            string       `yaml:"api_key"`
+	AccountID         string       `yaml:"account_id"`
+	MPANImport        string       `yaml:"mpan_import"`
+	MPANExport        string       `yaml:"mpan_export"`
+	MeterSerialImport string       `yaml:"meter_serial_import"`
+	MeterSerialExport string       `yaml:"meter_serial_export"`
+	Region            string       `yaml:"region"`
+	GoRates           []GoRate     `yaml:"go_rates"`
+	ExportRates       []ExportRate `yaml:"export_rates"`
 }
 
 type GoRate struct {
@@ -100,6 +152,38 @@ func (c *Config) applyEnv() {
 	overrideStr(&c.CacheDir, "CACHE_DIR")
 	if c.CacheDir == "" {
 		c.CacheDir = ".cache"
+	}
+	c.applyBatteryDefaults()
+	c.applyMCPDefaults()
+}
+
+func (c *Config) applyMCPDefaults() {
+	if c.MCP.Path == "" {
+		c.MCP.Path = "/mcp"
+	}
+}
+
+func (c *Config) applyBatteryDefaults() {
+	if c.Battery.CapacityKWh == 0 {
+		c.Battery.CapacityKWh = 12.0
+	}
+	if c.Battery.MaxChargeKW == 0 {
+		c.Battery.MaxChargeKW = 7.5
+	}
+	if c.Battery.MaxDischargeKW == 0 {
+		c.Battery.MaxDischargeKW = 7.5
+	}
+	if c.Battery.MinSoCPercent == 0 {
+		c.Battery.MinSoCPercent = 10.0
+	}
+	if c.Battery.MaxSoCPercent == 0 {
+		c.Battery.MaxSoCPercent = 100.0
+	}
+	if c.Battery.RoundTripEfficiency == 0 {
+		c.Battery.RoundTripEfficiency = 0.90
+	}
+	if c.Battery.CycleCostPence == 0 {
+		c.Battery.CycleCostPence = 80.0
 	}
 }
 

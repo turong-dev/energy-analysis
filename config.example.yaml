@@ -45,6 +45,42 @@ s3:
   # Credentials are read from the standard AWS credential chain:
   # AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY env vars, or ~/.aws/credentials
 
+# Battery configuration for smart charging optimization
+battery:
+  capacity_kwh: 12.0          # Total battery capacity in kWh
+  max_charge_kw: 7.5         # Maximum grid charging rate in kW
+  max_discharge_kw: 7.5      # Maximum discharge rate in kW
+  min_soc_percent: 10.0      # Minimum state of charge (%)
+  max_soc_percent: 100.0     # Maximum state of charge (%)
+  round_trip_efficiency: 0.90  # Charge→discharge efficiency
+  cycle_cost_pence: 80.0     # Cost of one full 0-100-0% cycle in pence
+
 # Local cache directory for S3 data (default: .cache, override with CACHE_DIR env var).
 # Set to empty string to disable caching.
 cache_dir: ".cache"
+
+# MCP (Model Context Protocol) server configuration
+# The MCP server exposes your energy data to LLMs like Claude
+# See MCP.md for documentation
+mcp:
+  enabled: false                   # Enable MCP server
+  path: "/mcp"                     # Base path for MCP endpoints
+  
+  # Auto-discover devices and tariffs from S3 storage
+  # When enabled, the server will scan storage and create registries:
+  # - registry/devices.json    - Discovered SolaX devices
+  # - registry/tariffs.json    - Discovered Octopus tariffs
+  auto_discover: true
+  
+  # Optional: Manually specify additional devices/tariffs
+  # Only needed if auto-discovery doesn't find everything
+  # devices:
+  #   - site_id: "home"
+  #     device_id: "inverter-1"
+  #     type: "solax"
+  # tariffs:
+  #   import:
+  #     - id: "my-tariff"
+  #       name: "My Custom Tariff"
+  #       code: "E-1R-..."
+  #       type: "dynamic"
