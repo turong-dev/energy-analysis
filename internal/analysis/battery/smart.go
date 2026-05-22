@@ -2,6 +2,7 @@ package battery
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"energy-utility/internal/analysis"
@@ -74,13 +75,13 @@ func SimulateDay(input DaySimulationInput) DaySimulationResult {
 	optimized := runSimulation(input, true)
 
 	potentialSavings := baseline.CostPence - optimized.CostPence
-	cycleCost := optimized.CyclesUsed * input.Config.CycleCostPence
-	netSavings := potentialSavings - cycleCost
-
-	if netSavings < 0 {
-		netSavings = 0
-		potentialSavings = 0
+	// Only charge cycle cost for the additional cycling caused by grid charging
+	marginalCycles := optimized.CyclesUsed - baseline.CyclesUsed
+	if marginalCycles < 0 {
+		marginalCycles = 0
 	}
+	cycleCost := marginalCycles * input.Config.CycleCostPence
+	netSavings := potentialSavings - cycleCost
 
 	return DaySimulationResult{
 		Date:                     input.Date,
@@ -126,6 +127,8 @@ func runSimulation(input DaySimulationInput, optimize bool) simulationResult {
 			if chargeAmount > 0 {
 				actualCharged := bs.Charge(chargeAmount)
 				if actualCharged > 0 {
+					result.CostPence += actualCharged * importPrice
+					result.TotalImport += actualCharged
 					solarFraction := solarKWh / (solarKWh + actualCharged)
 					effectivePrice := (importPrice * (1 - solarFraction))
 					slot := ChargingSlot{
@@ -173,43 +176,20 @@ func calculateOptimalCharge(bs *analysis.BatterySimulator, prices []float64, slo
 	}
 
 	importPrice := prices[slotIndex]
-	threshold := calculateDynamicThreshold(prices, slotIndex, cfg)
-
-	if importPrice > threshold {
+	if importPrice <= 0 {
 		return 0
 	}
 
-	availableCapacity := bs.GetAvailableCapacityKWh()
-	maxChargeRate := cfg.MaxChargeKW * 0.5
-	chargeAmount := min(availableCapacity, maxChargeRate)
-
-	savingsPerKWh := calculateAverageFuturePrice(prices, slotIndex) - importPrice
-	cycleCostPerKWh := cfg.CycleCostPence / cfg.CapacityKWh
-
-	if savingsPerKWh <= cycleCostPerKWh {
-		return 0
-	}
-
-	return chargeAmount
-}
-
-func calculateDynamicThreshold(prices []float64, slotIndex int, cfg device.BatteryConfig) float64 {
-	hoursAhead := 0
-	if slotIndex < 32 {
-		hoursAhead = 16
-	} else {
-		hoursAhead = 48 - slotIndex
-	}
-
-	endSlot := slotIndex + hoursAhead/2
+	// Look ahead 16 hours (or to end of day)
+	endSlot := slotIndex + 32
 	if endSlot > 48 {
 		endSlot = 48
 	}
-
 	if endSlot <= slotIndex {
-		return 100
+		return 0
 	}
 
+	// Find the minimum price in the lookahead window
 	minPrice := prices[slotIndex]
 	for i := slotIndex; i < endSlot; i++ {
 		if prices[i] < minPrice {
@@ -217,12 +197,23 @@ func calculateDynamicThreshold(prices []float64, slotIndex int, cfg device.Batte
 		}
 	}
 
-	threshold := minPrice + 1.0
+	// Only charge at or near the cheapest slots in the window
+	// (allow a small margin so we don't miss borderline profitable slots)
+	if importPrice > minPrice+2.0 {
+		return 0
+	}
 
-	efficiencyPenalty := (1.0 - cfg.RoundTripEfficiency) * calculateAverageFuturePrice(prices, slotIndex)
-	threshold -= efficiencyPenalty
+	// Check that future savings justify the charge
+	avgFuturePrice := calculateAverageFuturePrice(prices, slotIndex)
+	cycleCostPerKWh := cfg.CycleCostPence / cfg.CapacityKWh
+	savingsPerKWh := avgFuturePrice*cfg.RoundTripEfficiency - importPrice - cycleCostPerKWh
+	if savingsPerKWh <= 0 {
+		return 0
+	}
 
-	return threshold
+	availableCapacity := bs.GetAvailableCapacityKWh()
+	maxChargeRate := cfg.MaxChargeKW * 0.5
+	return min(availableCapacity, maxChargeRate)
 }
 
 func calculateAverageFuturePrice(prices []float64, fromSlot int) float64 {
@@ -230,16 +221,36 @@ func calculateAverageFuturePrice(prices []float64, fromSlot int) float64 {
 		return prices[fromSlot]
 	}
 
-	sum := 0.0
-	count := 0
+	// Collect future prices and sort to find the upper half average
+	// (we discharge during expensive slots, so average of all future prices
+	// understates the value of stored energy)
+	future := make([]float64, 0, len(prices)-fromSlot)
 	for i := fromSlot; i < len(prices); i++ {
-		sum += prices[i]
-		count++
+		future = append(future, prices[i])
 	}
-	if count == 0 {
+	if len(future) == 0 {
 		return prices[fromSlot]
 	}
-	return sum / float64(count)
+
+	// Sort ascending
+	for i := 0; i < len(future); i++ {
+		for j := i + 1; j < len(future); j++ {
+			if future[j] < future[i] {
+				future[i], future[j] = future[j], future[i]
+			}
+		}
+	}
+
+	// Average the upper half
+	mid := len(future) / 2
+	if mid == 0 {
+		mid = 1
+	}
+	sum := 0.0
+	for i := mid; i < len(future); i++ {
+		sum += future[i]
+	}
+	return sum / float64(len(future)-mid)
 }
 
 func slotTime(index int) string {
@@ -267,13 +278,16 @@ func AggregateToHalfHour(solar5min, load5min []float64) (solarHH, loadHH []float
 		}
 
 		for j := start; j < end; j++ {
-			if j < len(solar5min) {
+			if j < len(solar5min) && !math.IsNaN(solar5min[j]) {
 				solarHH[i] += solar5min[j]
 			}
-			if j < len(load5min) {
+			if j < len(load5min) && !math.IsNaN(load5min[j]) {
 				loadHH[i] += load5min[j]
 			}
 		}
+		// Convert from W at 5-min resolution to kWh per half-hour
+		solarHH[i] /= 12000.0
+		loadHH[i] /= 12000.0
 	}
 
 	return solarHH, loadHH
