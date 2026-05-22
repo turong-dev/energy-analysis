@@ -16,31 +16,57 @@ import (
 // startDate is the earliest date we have SolaX data for.
 var solaxStart = time.Date(2025, 4, 24, 0, 0, 0, 0, time.UTC)
 
-func fetchOctopus(ctx context.Context, cfg *config.Config, s3 store.Store) error {
+// allDNORegions is the complete set of UK GSP/DNO region codes.
+var allDNORegions = []string{"A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "N", "P"}
+
+func fetchOctopus(ctx context.Context, cfg *config.Config, s3 store.Store, regionsStr string) error {
 	client := octopus.NewClient(cfg.Octopus.APIKey)
 
-	region := cfg.Octopus.Region
+	// Determine which regions to fetch.
+	var regions []string
+	if regionsStr != "" {
+		for _, r := range strings.Split(regionsStr, ",") {
+			r = strings.TrimSpace(strings.ToUpper(r))
+			if r != "" {
+				regions = append(regions, r)
+			}
+		}
+	} else {
+		regions = append([]string(nil), allDNORegions...)
+	}
+
+	if len(regions) == 0 {
+		return fmt.Errorf("no regions specified")
+	}
+
+	// Also look up the user's actual region from their MPAN for consumption.
+	userRegion := cfg.Octopus.Region
 	if cfg.Octopus.MPANImport != "" {
 		r, err := client.GSPRegion(ctx, cfg.Octopus.MPANImport)
 		if err != nil {
-			log.Printf("warn: could not look up GSP region, falling back to config (%s): %v", region, err)
+			log.Printf("warn: could not look up GSP region, falling back to config (%s): %v", userRegion, err)
 		} else {
 			log.Printf("GSP region: %s", r)
-			region = r
+			userRegion = r
 		}
 	}
 
-	if err := fetchRates(ctx, client, s3, "import", region); err != nil {
-		return fmt.Errorf("fetch import rates: %w", err)
-	}
-	if err := fetchRates(ctx, client, s3, "export", region); err != nil {
-		return fmt.Errorf("fetch export rates: %w", err)
+	// Fetch agile rates for every requested region.
+	for _, region := range regions {
+		if err := fetchRates(ctx, client, s3, "import", region); err != nil {
+			return fmt.Errorf("fetch import rates for region %s: %w", region, err)
+		}
+		if err := fetchRates(ctx, client, s3, "export", region); err != nil {
+			return fmt.Errorf("fetch export rates for region %s: %w", region, err)
+		}
 	}
 
-	// Update tariff registry with discovered tariffs
-	if err := updateTariffRegistry(ctx, s3, client, region); err != nil {
+	// Update tariff registry with discovered tariffs (one entry per region).
+	if err := updateTariffRegistry(ctx, s3, client, regions); err != nil {
 		log.Printf("warn: failed to update tariff registry: %v", err)
 	}
+
+	// Consumption is personal to the user's meter, always use their region.
 	if err := fetchConsumption(ctx, client, s3, "import", cfg.Octopus.MPANImport, cfg.Octopus.MeterSerialImport); err != nil {
 		return fmt.Errorf("fetch import consumption: %w", err)
 	}
@@ -52,7 +78,7 @@ func fetchOctopus(ctx context.Context, cfg *config.Config, s3 store.Store) error
 }
 
 func fetchRates(ctx context.Context, client *octopus.Client, s3 store.Store, direction, region string) error {
-	log.Printf("fetching agile %s rates...", direction)
+	log.Printf("fetching agile %s rates for region %s...", direction, region)
 	now := time.Now().UTC()
 	// Agile rates for the following day are published at 4pm UK time,
 	// so extend the fetch window to end of tomorrow when past that time.
@@ -61,7 +87,7 @@ func fetchRates(ctx context.Context, client *octopus.Client, s3 store.Store, dir
 	for month := solaxStart; !monthStart(month).After(end); month = month.AddDate(0, 1, 0) {
 		from := monthStart(month)
 		to := monthEnd(month, end)
-		key := fmt.Sprintf("octopus/agile-%s/%d/%02d.json", direction, from.Year(), from.Month())
+		key := fmt.Sprintf("octopus/agile-%s/%s/%d/%02d.json", direction, region, from.Year(), from.Month())
 
 		// Always re-fetch the latest month as it may be incomplete
 		if !isCurrentMonth(from, now) {
@@ -216,8 +242,8 @@ func isIncomplete(ctx context.Context, s3 store.Store, key string, month, now ti
 	return false
 }
 
-// updateTariffRegistry updates the tariff registry with current tariff information.
-func updateTariffRegistry(ctx context.Context, s3 store.Store, client *octopus.Client, region string) error {
+// updateTariffRegistry updates the tariff registry with one entry per region.
+func updateTariffRegistry(ctx context.Context, s3 store.Store, client *octopus.Client, regions []string) error {
 	reg, err := registry.LoadTariffRegistry(ctx, s3)
 	if err != nil {
 		return fmt.Errorf("load registry: %w", err)
@@ -225,42 +251,48 @@ func updateTariffRegistry(ctx context.Context, s3 store.Store, client *octopus.C
 
 	now := time.Now().UTC()
 
-	// Update import tariff
+	// Update import tariffs (one per region)
 	importProduct, err := client.FindAgileProductAt(ctx, "import", now, log.Printf)
 	if err == nil && importProduct != "" {
-		reg.AddOrUpdateTariff(registry.TariffEntry{
-			ID:        "agile-import",
-			Name:      "Octopus Agile Import",
-			Code:      importProduct,
-			Type:      "dynamic",
-			Direction: "import",
-			Provider:  "octopus",
-			DataSource: registry.DataSource{
-				Type:   "s3",
-				Path:   "octopus/agile-import/",
-				Format: "monthly-rates",
-			},
-			ActiveFrom: solaxStart,
-		})
+		for _, region := range regions {
+			id := fmt.Sprintf("agile-import-%s", strings.ToLower(region))
+			reg.AddOrUpdateTariff(registry.TariffEntry{
+				ID:        id,
+				Name:      fmt.Sprintf("Octopus Agile Import (%s)", region),
+				Code:      importProduct,
+				Type:      "dynamic",
+				Direction: "import",
+				Provider:  "octopus",
+				DataSource: registry.DataSource{
+					Type:   "s3",
+					Path:   fmt.Sprintf("octopus/agile-import/%s/", region),
+					Format: "monthly-rates",
+				},
+				ActiveFrom: solaxStart,
+			})
+		}
 	}
 
-	// Update export tariff
+	// Update export tariffs (one per region)
 	exportProduct, err := client.FindAgileProductAt(ctx, "export", now, log.Printf)
 	if err == nil && exportProduct != "" {
-		reg.AddOrUpdateTariff(registry.TariffEntry{
-			ID:        "agile-export",
-			Name:      "Octopus Agile Export",
-			Code:      exportProduct,
-			Type:      "dynamic",
-			Direction: "export",
-			Provider:  "octopus",
-			DataSource: registry.DataSource{
-				Type:   "s3",
-				Path:   "octopus/agile-export/",
-				Format: "monthly-rates",
-			},
-			ActiveFrom: solaxStart,
-		})
+		for _, region := range regions {
+			id := fmt.Sprintf("agile-export-%s", strings.ToLower(region))
+			reg.AddOrUpdateTariff(registry.TariffEntry{
+				ID:        id,
+				Name:      fmt.Sprintf("Octopus Agile Export (%s)", region),
+				Code:      exportProduct,
+				Type:      "dynamic",
+				Direction: "export",
+				Provider:  "octopus",
+				DataSource: registry.DataSource{
+					Type:   "s3",
+					Path:   fmt.Sprintf("octopus/agile-export/%s/", region),
+					Format: "monthly-rates",
+				},
+				ActiveFrom: solaxStart,
+			})
+		}
 	}
 
 	if err := registry.SaveTariffRegistry(ctx, s3, reg); err != nil {

@@ -57,7 +57,10 @@ func main() {
 		}
 
 	case "fetch-octopus":
-		if err := fetchOctopus(ctx, cfg, s3); err != nil {
+		fs := flag.NewFlagSet("fetch-octopus", flag.ExitOnError)
+		regionsStr := fs.String("regions", "", "comma-separated DNO regions to fetch (default: all)")
+		fs.Parse(flag.Args()[1:])
+		if err := fetchOctopus(ctx, cfg, s3, *regionsStr); err != nil {
 			log.Fatalf("fetch-octopus: %v", err)
 		}
 
@@ -65,7 +68,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: harvest -config config.yaml <upload-solax|fetch-solax|fetch-octopus>")
 		fmt.Fprintln(os.Stderr, "  upload-solax               upload local solax/data/ files to S3")
 		fmt.Fprintln(os.Stderr, "  fetch-solax [--since DATE]  fetch from SolaX Cloud into S3")
-		fmt.Fprintln(os.Stderr, "  fetch-octopus               fetch Octopus rates and consumption")
+		fmt.Fprintln(os.Stderr, "  fetch-octopus [--regions A,B,C,...]  fetch Octopus rates and consumption")
 		os.Exit(1)
 	}
 }
