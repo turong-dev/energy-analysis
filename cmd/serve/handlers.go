@@ -6,10 +6,12 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"energy-utility/internal/analysis"
+	"energy-utility/internal/analysis/battery"
 	"energy-utility/internal/config"
 	"energy-utility/internal/device"
 	"energy-utility/internal/device/solax"
@@ -23,6 +25,19 @@ type dataPoint struct {
 	V float64 `json:"v"`
 }
 
+func configHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		region := cfg.Octopus.Region
+		if region == "" {
+			region = "E"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"region": region,
+		})
+	}
+}
+
 func ratesHandler(s3 store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		direction := r.URL.Query().Get("direction")
@@ -33,13 +48,18 @@ func ratesHandler(s3 store.Store) http.HandlerFunc {
 			http.Error(w, "direction must be import or export", http.StatusBadRequest)
 			return
 		}
+		region := strings.ToUpper(r.URL.Query().Get("region"))
+		if region == "" {
+			http.Error(w, "region query parameter is required", http.StatusBadRequest)
+			return
+		}
 		from, to, err := parseDateRange(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		rates, err := octopus.ReadRates(r.Context(), s3, direction, from, to)
+		rates, err := octopus.ReadRates(r.Context(), s3, direction, region, from, to)
 		if err != nil {
 			log.Printf("rates: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -105,6 +125,116 @@ func chargingOptHandler(s3 store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}
+}
+
+func smartChargingHandler(s3 store.Store, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		from, to, err := parseDateRange(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		log.Printf("smart-charging: range %s to %s", from.Format("2006-01-02"), to.Format("2006-01-02"))
+
+		region := strings.ToUpper(r.URL.Query().Get("region"))
+		if region == "" {
+			region = cfg.Octopus.Region
+			if region == "" {
+				region = "E"
+			}
+		}
+		importRates, err := octopus.ReadRates(r.Context(), s3, "import", region, from, to)
+		if err != nil {
+			log.Printf("smart-charging: import rates error: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		exportRates, err := octopus.ReadRates(r.Context(), s3, "export", region, from, to)
+		if err != nil {
+			log.Printf("smart-charging: export rates error: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("smart-charging: rates import=%d export=%d", len(importRates), len(exportRates))
+
+		deviceDays, err := solax.ReadDays(r.Context(), s3)
+		if err != nil {
+			log.Printf("smart-charging: read days error: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("smart-charging: device days=%d", len(deviceDays))
+
+		var simDays []battery.DaySimulationResult
+		batteryCfg := cfg.Battery.ToDeviceConfig()
+		if batteryCfg.CapacityKWh == 0 {
+			batteryCfg = device.DefaultBatteryConfig()
+		}
+
+		matched := 0
+		for _, d := range deviceDays {
+			date, err := time.Parse("2006-01-02", d.Date)
+			if err != nil {
+				continue
+			}
+			if date.Before(from) || !date.Before(to) {
+				continue
+			}
+			matched++
+
+			solarHH, loadHH := battery.AggregateToHalfHour(d.PVPower, d.LoadPower)
+			if len(solarHH) != 48 || len(loadHH) != 48 {
+				log.Printf("smart-charging: %s bad lengths solar=%d load=%d", d.Date, len(solarHH), len(loadHH))
+				continue
+			}
+
+			dayRates := filterRatesForDay(importRates, date)
+			dayExport := filterRatesForDay(exportRates, date)
+			if len(dayRates) != 48 {
+				log.Printf("smart-charging: %s dayRates len=%d", d.Date, len(dayRates))
+				continue
+			}
+
+			input := battery.DaySimulationInput{
+				Date:        d.Date,
+				ImportRates: dayRates,
+				ExportRates: dayExport,
+				SolarPower:  solarHH,
+				LoadPower:   loadHH,
+				InitialSoC:  50,
+				Config:      batteryCfg,
+			}
+			simDays = append(simDays, battery.SimulateDay(input))
+		}
+		log.Printf("smart-charging: matched=%d simulated=%d", matched, len(simDays))
+
+		summary := battery.SummarizeResults(simDays)
+		response := battery.ChargingOptimizationResponse{
+			Days:    simDays,
+			Summary: summary,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("smart-charging: encode error: %v", err)
+		}
+	}
+}
+
+func filterRatesForDay(rates []octopus.HalfHourlyRate, day time.Time) []float64 {
+	result := make([]float64, 48)
+	london, _ := time.LoadLocation("Europe/London")
+	for _, r := range rates {
+		local := r.ValidFrom.In(london)
+		if local.Format("2006-01-02") != day.Format("2006-01-02") {
+			continue
+		}
+		slot := local.Hour()*2 + local.Minute()/30
+		if slot >= 0 && slot < 48 {
+			result[slot] = r.ValueIncVAT
+		}
+	}
+	return result
 }
 
 func modeSwitchHandler(s3 store.Store) http.HandlerFunc {
@@ -241,13 +371,20 @@ func analysisHandler(s3 store.Store, cfg *config.OctopusConfig, oc *octopus.Clie
 			return
 		}
 
-		importRates, err := octopus.ReadRates(r.Context(), s3, "import", from, to)
+		region := strings.ToUpper(r.URL.Query().Get("region"))
+		if region == "" {
+			region = cfg.Region
+			if region == "" {
+				region = "E"
+			}
+		}
+		importRates, err := octopus.ReadRates(r.Context(), s3, "import", region, from, to)
 		if err != nil {
 			log.Printf("analysis: import rates: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		exportRates, err := octopus.ReadRates(r.Context(), s3, "export", from, to)
+		exportRates, err := octopus.ReadRates(r.Context(), s3, "export", region, from, to)
 		if err != nil {
 			log.Printf("analysis: export rates: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)

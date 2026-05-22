@@ -53,12 +53,14 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/config", configHandler(cfg))
 	mux.HandleFunc("GET /api/rates", ratesHandler(s3))
 	mux.HandleFunc("GET /api/consumption", consumptionHandler(s3))
 	oc := octopus.NewClient(cfg.Octopus.APIKey)
 	mux.HandleFunc("GET /api/analysis", analysisHandler(s3, &cfg.Octopus, oc))
 	mux.HandleFunc("GET /api/battery/mode-switch", modeSwitchHandler(s3))
 	mux.HandleFunc("GET /api/battery/charging-optimisation", chargingOptHandler(s3))
+	mux.HandleFunc("GET /api/charging/optimization", smartChargingHandler(s3, cfg))
 
 	// MCP endpoints (only if enabled)
 	if cfg.MCP.Enabled && mcpServer != nil {
