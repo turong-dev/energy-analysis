@@ -18,11 +18,12 @@ type MCPImportTariff struct {
 	tariffType     tariff.TariffType
 	store          store.Store
 	direction      string
+	region         string
 	standingCharge float64
 }
 
 // NewMCPImportTariff creates a new MCP-compatible import tariff.
-func NewMCPImportTariff(id, name, code string, t tariff.TariffType, s store.Store, sc float64) *MCPImportTariff {
+func NewMCPImportTariff(id, name, code string, t tariff.TariffType, s store.Store, region string, sc float64) *MCPImportTariff {
 	return &MCPImportTariff{
 		id:             id,
 		name:           name,
@@ -30,6 +31,7 @@ func NewMCPImportTariff(id, name, code string, t tariff.TariffType, s store.Stor
 		tariffType:     t,
 		store:          s,
 		direction:      "import",
+		region:         region,
 		standingCharge: sc,
 	}
 }
@@ -50,7 +52,7 @@ func (t *MCPImportTariff) Rate(at time.Time) (tariff.Rate, error) {
 }
 
 func (t *MCPImportTariff) Rates(from, to time.Time) ([]tariff.Rate, error) {
-	rates, err := ReadRates(context.Background(), t.store, t.direction, from, to)
+	rates, err := ReadRates(context.Background(), t.store, t.direction, t.region, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -79,10 +81,11 @@ type MCPExportTariff struct {
 	tariffType tariff.TariffType
 	store      store.Store
 	direction  string
+	region     string
 }
 
 // NewMCPExportTariff creates a new MCP-compatible export tariff.
-func NewMCPExportTariff(id, name, code string, t tariff.TariffType, s store.Store) *MCPExportTariff {
+func NewMCPExportTariff(id, name, code string, t tariff.TariffType, s store.Store, region string) *MCPExportTariff {
 	return &MCPExportTariff{
 		id:         id,
 		name:       name,
@@ -90,6 +93,7 @@ func NewMCPExportTariff(id, name, code string, t tariff.TariffType, s store.Stor
 		tariffType: t,
 		store:      s,
 		direction:  "export",
+		region:     region,
 	}
 }
 
@@ -109,7 +113,7 @@ func (t *MCPExportTariff) Rate(at time.Time) (tariff.Rate, error) {
 }
 
 func (t *MCPExportTariff) Rates(from, to time.Time) ([]tariff.Rate, error) {
-	rates, err := ReadRates(context.Background(), t.store, t.direction, from, to)
+	rates, err := ReadRates(context.Background(), t.store, t.direction, t.region, from, to)
 	if err != nil {
 		return nil, err
 	}

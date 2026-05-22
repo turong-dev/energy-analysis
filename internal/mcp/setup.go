@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path"
 	"strings"
 
 	"energy-utility/internal/config"
@@ -80,58 +81,72 @@ func ConfigureServer(ctx context.Context, server *Server, s store.Store, cfg *co
 
 	// Register discovered/import tariffs
 	for _, t := range tariffReg.Import {
+		region := extractRegionFromPath(t.DataSource.Path)
 		importTariff := octopusstore.NewMCPImportTariff(
 			t.ID,
 			t.Name,
 			t.Code,
 			parseTariffType(t.Type),
 			s,
+			region,
 			0.0,
 		)
 		server.RegisterImportTariff(t.ID, importTariff)
-		log.Printf("MCP: registered import tariff %s (%s)", t.ID, t.Name)
+		log.Printf("MCP: registered import tariff %s (%s, region=%s)", t.ID, t.Name, region)
 		importCount++
 	}
 
 	// Register discovered/export tariffs
 	for _, t := range tariffReg.Export {
+		region := extractRegionFromPath(t.DataSource.Path)
 		exportTariff := octopusstore.NewMCPExportTariff(
 			t.ID,
 			t.Name,
 			t.Code,
 			parseTariffType(t.Type),
 			s,
+			region,
 		)
 		server.RegisterExportTariff(t.ID, exportTariff)
-		log.Printf("MCP: registered export tariff %s (%s)", t.ID, t.Name)
+		log.Printf("MCP: registered export tariff %s (%s, region=%s)", t.ID, t.Name, region)
 		exportCount++
 	}
 
 	// Also register any manually configured tariffs
 	for _, tCfg := range cfg.MCP.Tariffs.Import {
+		region := extractRegionFromPath(tCfg.StorageKey)
+		if region == "" {
+			region = cfg.Octopus.Region
+		}
 		importTariff := octopusstore.NewMCPImportTariff(
 			tCfg.ID,
 			tCfg.Name,
 			tCfg.Code,
 			parseTariffType(tCfg.Type),
 			s,
+			region,
 			0.0,
 		)
 		server.RegisterImportTariff(tCfg.ID, importTariff)
-		log.Printf("MCP: registered configured import tariff %s", tCfg.ID)
+		log.Printf("MCP: registered configured import tariff %s (region=%s)", tCfg.ID, region)
 		importCount++
 	}
 
 	for _, tCfg := range cfg.MCP.Tariffs.Export {
+		region := extractRegionFromPath(tCfg.StorageKey)
+		if region == "" {
+			region = cfg.Octopus.Region
+		}
 		exportTariff := octopusstore.NewMCPExportTariff(
 			tCfg.ID,
 			tCfg.Name,
 			tCfg.Code,
 			parseTariffType(tCfg.Type),
 			s,
+			region,
 		)
 		server.RegisterExportTariff(tCfg.ID, exportTariff)
-		log.Printf("MCP: registered configured export tariff %s", tCfg.ID)
+		log.Printf("MCP: registered configured export tariff %s (region=%s)", tCfg.ID, region)
 		exportCount++
 	}
 
@@ -153,4 +168,19 @@ func parseTariffType(t string) tariff.TariffType {
 	default:
 		return tariff.TariffFixed
 	}
+}
+
+// extractRegionFromPath extracts a single-letter region code from an agile
+// storage path such as "octopus/agile-import/E/" or "octopus/agile-export/E/".
+// It returns an empty string when no region segment is present.
+func extractRegionFromPath(p string) string {
+	p = strings.TrimSuffix(p, "/")
+	// Expecting paths like "octopus/agile-import/E"
+	if strings.HasPrefix(p, "octopus/agile-") {
+		base := path.Base(p)
+		if len(base) == 1 && base >= "A" && base <= "P" {
+			return base
+		}
+	}
+	return ""
 }

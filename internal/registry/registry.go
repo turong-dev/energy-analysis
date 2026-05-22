@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"energy-utility/internal/store"
@@ -253,73 +254,117 @@ func DiscoverDevices(ctx context.Context, s store.Store) (*DeviceRegistry, error
 }
 
 // DiscoverTariffs scans storage and populates tariff registry from existing data.
+// It detects region-specific agile tariffs (e.g. octopus/agile-import/E/) as well
+// as legacy flat paths for backward compatibility.
 func DiscoverTariffs(ctx context.Context, s store.Store) (*TariffRegistry, error) {
 	reg := &TariffRegistry{
 		Version:   registryVersion,
 		UpdatedAt: time.Now(),
 	}
 
-	// Check for import rates - support both old and new path structures
+	// --- import ---
 	importKeys, _ := s.List(ctx, "octopus/agile-import/")
-	if len(importKeys) == 0 {
-		// Try alternative path structure
-		importKeys, _ = s.List(ctx, "octopus/agile/import/")
-	}
-	if len(importKeys) > 0 {
-		// Try to extract actual tariff code from the data
-		code := "E-1R-AGILE-24-10-01-C" // Default
-		path := "octopus/agile-import/"
-		if len(importKeys) > 0 && len(importKeys[0]) > 0 {
-			// Use the actual path found
-			if importKeys[0][0:23] == "octopus/agile/import/" {
-				path = "octopus/agile/import/"
-			}
-		}
+	importRegions, hasLegacyImport := scanAgileRegions(importKeys, "octopus/agile-import/")
+	for _, region := range importRegions {
+		id := fmt.Sprintf("agile-import-%s", strings.ToLower(region))
 		reg.Import = append(reg.Import, TariffEntry{
-			ID:        "agile-import",
-			Name:      "Octopus Agile Import",
-			Code:      code,
+			ID:        id,
+			Name:      fmt.Sprintf("Octopus Agile Import (%s)", region),
 			Type:      "dynamic",
 			Direction: "import",
 			Provider:  "octopus",
 			DataSource: DataSource{
 				Type:   "s3",
-				Path:   path,
+				Path:   fmt.Sprintf("octopus/agile-import/%s/", region),
+				Format: "monthly-rates",
+			},
+		})
+	}
+	if hasLegacyImport {
+		reg.Import = append(reg.Import, TariffEntry{
+			ID:        "agile-import",
+			Name:      "Octopus Agile Import",
+			Type:      "dynamic",
+			Direction: "import",
+			Provider:  "octopus",
+			DataSource: DataSource{
+				Type:   "s3",
+				Path:   "octopus/agile-import/",
 				Format: "monthly-rates",
 			},
 		})
 	}
 
-	// Check for export rates - support both old and new path structures
+	// --- export ---
 	exportKeys, _ := s.List(ctx, "octopus/agile-export/")
-	if len(exportKeys) == 0 {
-		// Try alternative path structure
-		exportKeys, _ = s.List(ctx, "octopus/agile/export/")
-	}
-	if len(exportKeys) > 0 {
-		code := "E-1R-OUTGOING-24-09-01-C" // Default
-		path := "octopus/agile-export/"
-		if len(exportKeys) > 0 && len(exportKeys[0]) > 0 {
-			if exportKeys[0][0:23] == "octopus/agile/export/" {
-				path = "octopus/agile/export/"
-			}
-		}
+	exportRegions, hasLegacyExport := scanAgileRegions(exportKeys, "octopus/agile-export/")
+	for _, region := range exportRegions {
+		id := fmt.Sprintf("agile-export-%s", strings.ToLower(region))
 		reg.Export = append(reg.Export, TariffEntry{
-			ID:        "agile-export",
-			Name:      "Octopus Agile Export",
-			Code:      code,
+			ID:        id,
+			Name:      fmt.Sprintf("Octopus Agile Export (%s)", region),
 			Type:      "dynamic",
 			Direction: "export",
 			Provider:  "octopus",
 			DataSource: DataSource{
 				Type:   "s3",
-				Path:   path,
+				Path:   fmt.Sprintf("octopus/agile-export/%s/", region),
+				Format: "monthly-rates",
+			},
+		})
+	}
+	if hasLegacyExport {
+		reg.Export = append(reg.Export, TariffEntry{
+			ID:        "agile-export",
+			Name:      "Octopus Agile Export",
+			Type:      "dynamic",
+			Direction: "export",
+			Provider:  "octopus",
+			DataSource: DataSource{
+				Type:   "s3",
+				Path:   "octopus/agile-export/",
 				Format: "monthly-rates",
 			},
 		})
 	}
 
 	return reg, nil
+}
+
+// scanAgileRegions inspects storage keys under an agile prefix and extracts
+// single-letter region codes (e.g. "E"). It also reports whether legacy
+// flat-path data (year directories directly under the prefix) was found.
+func scanAgileRegions(keys []string, prefix string) (regions []string, hasLegacy bool) {
+	seen := make(map[string]bool)
+	for _, key := range keys {
+		rel := strings.TrimPrefix(key, prefix)
+		parts := strings.SplitN(rel, "/", 2)
+		if len(parts) == 0 || parts[0] == "" {
+			continue
+		}
+		first := parts[0]
+		if len(first) == 1 && first >= "A" && first <= "P" && first != "I" && first != "O" {
+			if !seen[first] {
+				seen[first] = true
+				regions = append(regions, first)
+			}
+		} else if len(first) == 4 && isYear(first) {
+			hasLegacy = true
+		}
+	}
+	return regions, hasLegacy
+}
+
+func isYear(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // EnsureRegistries creates registries if they don't exist.
